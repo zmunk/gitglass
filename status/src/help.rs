@@ -134,9 +134,10 @@ mod tests {
 
     #[test]
     fn small_terminals_and_control_characters_are_safe() {
-        let bindings =
-            parse_config("[[status.keybindings]]\nkey='e'\ncommand='true'\ndescription=\"Edit\\nfile\"")
-                .unwrap();
+        let bindings = parse_config(
+            "[[status.keybindings]]\nkey='e'\ncommand='true'\ndescription=\"Edit\\nfile\"",
+        )
+        .unwrap();
         let mut help = Help::new(&bindings);
         assert!(help.rows.contains(&r"e  Edit\nfile".to_owned()));
         help.toggle();

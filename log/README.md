@@ -1,0 +1,45 @@
+# gitglass-log
+
+A Ratatui viewer for `git log --oneline --graph --decorate`. The selected
+line is bold; Git colors and graph connector lines are preserved. Keyboard
+hints appear in gray.
+
+## Run
+
+With Rust installed, run `cargo run --release` from this project inside a Git
+repository. Alternatively, install with `cargo install --path .`, then run
+`gitglass-log` inside any Git repository.  This crate is also integrated as
+the `gitglass log` subcommand.
+
+## Keys
+
+- `j` / `k` (or arrow keys): move down / up one line
+- `Ctrl-d` / `Ctrl-u`: move down / up half the visible log area
+- `b`: toggle the right-hand branch list (local and remote branches); focus it when opening
+- `Space` in the branch list: toggle inclusion in the log (`[x]` means included)
+- `a` in the branch list: select all branches (including hidden matches), or clear all if all are selected
+- `/` in the branch list: edit a live, case-insensitive substring filter shown beside the title
+- `Enter` while filtering: return focus to the filtered list, keeping the query
+- `Backspace` while filtering: delete the last character
+- `Esc`: clear an active filter first; otherwise close the branch list and return to the log; quit if already in the log
+- `q` or `Ctrl-c`: quit
+
+The viewport follows the selection and adapts to terminal resizing.
+The branch list is sorted by committer date, newest first. It uses the same
+navigation keys and displays the current branch in green with a `*` marker;
+the cursor remains bold. Closing it preserves your log position; opening it
+refreshes the branch list. Filtering only changes which branches are visible;
+it does not change their inclusion in the log. `Space` toggles the highlighted
+visible branch, while `a` still affects all branches.
+The current branch is included (`[x]`) by default. The log shows commits reachable
+from the included branches, without duplicates. With no branches included, the
+log is empty and displays a prompt to select branches. Detached HEAD starts with
+no branches selected. Inclusion persists when the menu is closed and reopened. Toggling refreshes the log and resets its cursor to the top;
+if loading fails, the previous log and inclusion remain unchanged.
+This only filters history—it does not check branches out.
+Git log errors are reported before entering the terminal UI; branch-loading errors
+appear in the branch pane.
+
+## Development
+
+Run `cargo test` for navigation, scrolling, and bold-selection rendering tests.

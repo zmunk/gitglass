@@ -70,8 +70,7 @@ pub fn run(
                                     Ok(snapshot) => app.replace(snapshot),
                                     Err(refresh) => {
                                         app.valid = false;
-                                        app.message
-                                            .push_str(&format!(" — Refresh: {refresh:#}"));
+                                        app.message.push_str(&format!(" — Refresh: {refresh:#}"));
                                     }
                                 }
                             }

@@ -9,6 +9,7 @@ Usage: gitglass <command> [args]
 Commands:
   status            Show Git status with configurable keybindings
   diff <file>       Interactively stage/unstage content changes in a file
+  log               Interactive Git log viewer with branch filtering
   help              Show this help message
 ";
 
@@ -17,7 +18,9 @@ fn run() -> Result<()> {
 
     // Bare "gitglass" (no args) or explicit help.
     if args.is_empty()
-        || args.first().is_some_and(|a| a == "--help" || a == "-h" || a == "help")
+        || args
+            .first()
+            .is_some_and(|a| a == "--help" || a == "-h" || a == "help")
     {
         eprint!("{USAGE}");
         return Ok(());
@@ -31,13 +34,12 @@ fn run() -> Result<()> {
             }
 
             // Load config *before* terminal init so parse errors print normally.
-            let bindings = gitglass_status::config::load()
-                .context("Cannot load gitglass configuration")?;
+            let bindings =
+                gitglass_status::config::load().context("Cannot load gitglass configuration")?;
 
             prepare_signals().context("Cannot prepare signal handlers")?;
 
-            let (mut terminal, _guard) =
-                init_terminal().context("Cannot initialise terminal")?;
+            let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
 
             gitglass_status::run(&mut terminal, &bindings)
                 .context("Status TUI exited with an error")?;
@@ -65,11 +67,20 @@ fn run() -> Result<()> {
             // commands are launched), but we install them anyway for consistency.
             prepare_signals().context("Cannot prepare signal handlers")?;
 
-            let (mut terminal, _guard) =
-                init_terminal().context("Cannot initialise terminal")?;
+            let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
 
             gitglass_diff::run(&mut terminal, repo, snapshot, &file_name)
                 .context("Diff TUI exited with an error")?;
+
+            Ok(())
+        }
+        Some("log") => {
+            if !args.is_empty() {
+                bail!("gitglass log takes no arguments (got {args:?})");
+            }
+
+            gitglass_log::run()
+                .map_err(|e| anyhow::anyhow!("Log TUI exited with an error: {e:#}"))?;
 
             Ok(())
         }

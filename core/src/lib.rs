@@ -38,9 +38,7 @@ pub fn init_terminal() -> io::Result<(Terminal<CrosstermBackend<io::Stderr>>, Te
 }
 
 /// Suspend the TUI so an external command can use the terminal.
-pub fn suspend_terminal(
-    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
-) -> io::Result<()> {
+pub fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stderr>>) -> io::Result<()> {
     terminal.show_cursor()?;
     disable_raw_mode()?;
     execute!(io::stderr(), LeaveAlternateScreen, crossterm::cursor::Show)?;
@@ -48,9 +46,7 @@ pub fn suspend_terminal(
 }
 
 /// Restore the TUI after an external command has finished.
-pub fn restore_terminal(
-    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
-) -> io::Result<()> {
+pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stderr>>) -> io::Result<()> {
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;

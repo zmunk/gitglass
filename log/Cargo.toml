@@ -1,0 +1,11 @@
+[package]
+name = "gitglass-log"
+version = "0.1.0"
+edition = "2021"
+description = "A keyboard-driven Git log viewer"
+license = "MIT"
+
+[dependencies]
+ansi-to-tui = "7"
+crossterm = "0.28"
+ratatui = "0.29"

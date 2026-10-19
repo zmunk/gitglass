@@ -179,6 +179,7 @@ dependencies = [
  "anyhow",
  "gitglass-core",
  "gitglass-diff",
+ "gitglass-log",
  "gitglass-status",
 ]
 
@@ -203,6 +204,15 @@ dependencies = [
  "similar",
  "tempfile",
  "xattr",
+]
+
+[[package]]
+name = "gitglass-log"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "crossterm",
+ "ratatui",
 ]
 
 [[package]]
