@@ -93,16 +93,33 @@ pub fn execute(
             binding.label
         )));
     }
-    suspend_terminal(terminal)?;
-    let result = run_command(command(binding, file, cwd));
-    restore_terminal(terminal)?;
-    Ok(match result {
-        Ok((status, stderr)) => result_message(binding, status, &stderr),
-        Err(error) => Some(format!(
-            "{}: Could not launch command: {error}",
-            binding.label
-        )),
-    })
+    if binding.suspend {
+        suspend_terminal(terminal)?;
+        let result = run_command(command(binding, file, cwd));
+        restore_terminal(terminal)?;
+        Ok(match result {
+            Ok((status, stderr)) => result_message(binding, status, &stderr),
+            Err(error) => Some(format!(
+                "{}: Could not launch command: {error}",
+                binding.label
+            )),
+        })
+    } else {
+        let output = command(binding, file, cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        Ok(match output {
+            Ok(output) => {
+                let combined: Vec<u8> = output.stdout.into_iter().chain(output.stderr).collect();
+                result_message(binding, output.status, &combined)
+            }
+            Err(error) => Some(format!(
+                "{}: Could not launch command: {error}",
+                binding.label
+            )),
+        })
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -120,6 +137,7 @@ mod tests {
             requires_file: requires_file(source),
             exit_messages: Default::default(),
             success_message: None,
+            suspend: true,
         }
     }
 

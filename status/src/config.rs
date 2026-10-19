@@ -14,6 +14,10 @@ pub const BUILTINS: &[(&str, &str)] = &[
     ("?", "toggle keybinding help"),
 ];
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBinding {
@@ -23,6 +27,8 @@ struct RawBinding {
     success_message: Option<String>,
     #[serde(default)]
     exit_messages: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    suspend: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -48,6 +54,7 @@ pub struct Binding {
     pub requires_file: bool,
     pub exit_messages: HashMap<i32, String>,
     pub success_message: Option<String>,
+    pub suspend: bool,
 }
 
 pub fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> Key {
@@ -201,6 +208,7 @@ pub fn parse_config(contents: &str) -> io::Result<Vec<Binding>> {
             command: raw.command,
             exit_messages,
             success_message: raw.success_message,
+            suspend: raw.suspend,
             label,
         });
     }
