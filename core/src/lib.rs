@@ -38,10 +38,21 @@ pub fn init_terminal() -> io::Result<(Terminal<CrosstermBackend<io::Stderr>>, Te
 }
 
 /// Suspend the TUI so an external command can use the terminal.
-pub fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stderr>>) -> io::Result<()> {
+///
+/// When `leave_alternate_screen` is `true` (the default), the alternate
+/// screen is left so line-mode command output appears on the main terminal
+/// buffer and survives after the TUI exits.  Set it to `false` when the
+/// child process is itself a TUI application that manages its own alternate
+/// screen — this avoids a distracting flash as control transitions.
+pub fn suspend_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    leave_alternate_screen: bool,
+) -> io::Result<()> {
     terminal.show_cursor()?;
     disable_raw_mode()?;
-    execute!(io::stderr(), LeaveAlternateScreen, crossterm::cursor::Show)?;
+    if leave_alternate_screen {
+        execute!(io::stderr(), LeaveAlternateScreen, crossterm::cursor::Show)?;
+    }
     Ok(())
 }
 

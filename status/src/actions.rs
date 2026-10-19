@@ -94,7 +94,7 @@ pub fn execute(
         )));
     }
     if binding.suspend {
-        suspend_terminal(terminal)?;
+        suspend_terminal(terminal, binding.leave_alternate_screen)?;
         let result = run_command(command(binding, file, cwd));
         restore_terminal(terminal)?;
         Ok(match result {
@@ -138,6 +138,7 @@ mod tests {
             exit_messages: Default::default(),
             success_message: None,
             suspend: true,
+            leave_alternate_screen: true,
         }
     }
 

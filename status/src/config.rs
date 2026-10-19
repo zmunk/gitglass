@@ -29,6 +29,8 @@ struct RawBinding {
     exit_messages: HashMap<String, String>,
     #[serde(default = "default_true")]
     suspend: bool,
+    #[serde(default)]
+    leave_alternate_screen: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -55,6 +57,7 @@ pub struct Binding {
     pub exit_messages: HashMap<i32, String>,
     pub success_message: Option<String>,
     pub suspend: bool,
+    pub leave_alternate_screen: bool,
 }
 
 pub fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> Key {
@@ -209,6 +212,7 @@ pub fn parse_config(contents: &str) -> io::Result<Vec<Binding>> {
             exit_messages,
             success_message: raw.success_message,
             suspend: raw.suspend,
+            leave_alternate_screen: raw.leave_alternate_screen,
             label,
         });
     }
