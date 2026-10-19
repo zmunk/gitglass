@@ -1,0 +1,16 @@
+[workspace]
+members = ["core", "status", "diff"]
+resolver = "2"
+
+[package]
+name = "gitglass"
+version = "0.1.0"
+edition = "2021"
+description = "Git porcelain TUI: status and diff"
+license = "MIT"
+
+[dependencies]
+gitglass-core = { path = "core" }
+gitglass-status = { path = "status" }
+gitglass-diff = { path = "diff" }
+anyhow = "1"

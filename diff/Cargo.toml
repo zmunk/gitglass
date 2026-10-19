@@ -1,0 +1,14 @@
+[package]
+name = "gitglass-diff"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gitglass-core = { path = "../core" }
+anyhow = "1"
+crossterm = "0.28"
+ratatui = "0.29"
+similar = "2.6"
+tempfile = "3"
+libc = "0.2"
+xattr = "1"
