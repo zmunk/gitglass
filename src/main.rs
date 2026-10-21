@@ -4,19 +4,28 @@ use anyhow::{bail, Context, Result};
 use gitglass_core::{init_terminal, prepare_signals};
 
 const USAGE: &str = "\
-Usage: gitglass <command> [args]
+Usage: gitglass [command] [args]
 
 Commands:
   status            Show Git status with configurable keybindings
   diff <file>       Interactively stage/unstage content changes in a file
   log               Interactive Git log viewer with branch filtering
   help              Show this help message
+
+With no command, runs the configured default_command, or shows help.
 ";
 
 fn run() -> Result<()> {
     let mut args: Vec<OsString> = env::args_os().skip(1).collect();
 
-    // Bare "gitglass" (no args) or explicit help.
+    if args.is_empty() {
+        let default = gitglass_status::config::load_default_command()
+            .context("Cannot load gitglass configuration")?;
+        if let Some(command) = default {
+            args.push(OsString::from(command.as_str()));
+        }
+    }
+
     if args.is_empty()
         || args
             .first()

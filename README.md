@@ -18,6 +18,19 @@ cargo install --path .
 
 Requires a recent Rust toolchain and Git CLI (2.31+).
 
+## Default command
+
+To run `gitglass status` when invoking `gitglass` without arguments, add this
+at the top of `$XDG_CONFIG_HOME/gitglass/config.toml` (or
+`~/.config/gitglass/config.toml`), before any table headers:
+
+```toml
+default_command = "status"
+```
+
+Supported defaults are `status` and `log`. Without this setting, `gitglass`
+shows help. Explicit subcommands and `--help` / `-h` always take precedence.
+
 ## Subcommands
 
 ### `gitglass status`

@@ -40,9 +40,26 @@ struct StatusSection {
     keybindings: Vec<RawBinding>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DefaultCommand {
+    Status,
+    Log,
+}
+
+impl DefaultCommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Log => "log",
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    default_command: Option<DefaultCommand>,
     #[serde(default)]
     status: StatusSection,
 }
@@ -226,10 +243,32 @@ pub fn parse_config(contents: &str) -> io::Result<Vec<Binding>> {
     }
 }
 
-/// Load keybindings from `$XDG_CONFIG_HOME/gitglass/config.toml` (falling
-/// back to `~/.config/gitglass/config.toml`).  Returns an empty `Vec` when
-/// the file does not exist.
+/// Load keybindings from the global configuration, or none if it is absent.
 pub fn load() -> io::Result<Vec<Binding>> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(Vec::new());
+    };
+    parse_config(&contents)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
+/// Load the command to run when invoked without arguments.
+pub fn load_default_command() -> io::Result<Option<DefaultCommand>> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(None);
+    };
+    let config: Config = toml::from_str(&contents).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: {error}", path.display()),
+        )
+    })?;
+    Ok(config.default_command)
+}
+
+/// Read `$XDG_CONFIG_HOME/gitglass/config.toml`, falling back to
+/// `~/.config/gitglass/config.toml`.
+fn load_contents() -> io::Result<Option<(PathBuf, String)>> {
     let root = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -245,7 +284,7 @@ pub fn load() -> io::Result<Vec<Binding>> {
     let path = root.join("gitglass/config.toml");
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(io::Error::new(
                 error.kind(),
@@ -253,13 +292,30 @@ pub fn load() -> io::Result<Vec<Binding>> {
             ))
         }
     };
-    parse_config(&contents)
-        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+    Ok(Some((path, contents)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_optional_default_command() {
+        assert_eq!(toml::from_str::<Config>("").unwrap().default_command, None);
+        for (name, expected) in [
+            ("status", DefaultCommand::Status),
+            ("log", DefaultCommand::Log),
+        ] {
+            let contents = format!("default_command = '{name}'\n[status]\n");
+            let config: Config = toml::from_str(&contents).unwrap();
+            assert_eq!(config.default_command, Some(expected));
+            assert_eq!(expected.as_str(), name);
+            assert!(parse_config(&contents).unwrap().is_empty());
+        }
+        for value in ["'diff'", "'unknown'", "''", "'status --help'", "123"] {
+            assert!(parse_config(&format!("default_command = {value}")).is_err());
+        }
+    }
 
     #[test]
     fn file_reference_is_lexical_and_has_a_boundary() {
