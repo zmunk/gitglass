@@ -3,7 +3,13 @@
 //! This crate provides the log-TUI half of `gitglass`.  Use [`run`] to
 //! start the event loop; it manages its own terminal lifecycle.
 
-use std::{collections::BTreeSet, error::Error, io, process::Command};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    io,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 use ansi_to_tui::IntoText;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -14,6 +20,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     DefaultTerminal, Frame,
 };
+
+const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 struct BranchPane {
     entries: Vec<String>,
@@ -40,6 +48,37 @@ impl BranchPane {
             editing_filter: false,
             visible,
         }
+    }
+
+    fn refresh(&mut self, result: io::Result<Vec<String>>) {
+        let entries = match result {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let selected = self.state.selected();
+        let reference = selected
+            .and_then(|index| self.visible.get(index))
+            .map(|index| branch_ref(&self.entries[*index]).to_owned());
+        let offset = self.state.offset();
+        self.entries = entries;
+        self.error = None;
+        self.update_filter();
+        let selected = reference
+            .and_then(|reference| {
+                self.visible
+                    .iter()
+                    .position(|index| branch_ref(&self.entries[*index]) == reference)
+            })
+            .or_else(|| {
+                (!self.visible.is_empty())
+                    .then(|| selected.unwrap_or(0).min(self.visible.len() - 1))
+            });
+        self.state = ListState::default()
+            .with_selected(selected)
+            .with_offset(offset.min(self.visible.len().saturating_sub(1)));
     }
 
     fn update_filter(&mut self) {
@@ -335,13 +374,35 @@ impl App {
         );
     }
 
+    fn refresh_log(&mut self, result: Result<Vec<Line<'static>>, Box<dyn Error>>) {
+        match result {
+            Ok(lines) => {
+                self.lines = lines;
+                self.selected = self.selected.min(self.lines.len().saturating_sub(1));
+                self.keep_visible();
+                self.log_error = None;
+            }
+            Err(error) => self.log_error = Some(error.to_string()),
+        }
+    }
+
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if let Event::Key(key) = event::read()? {
-                if self.handle_key(key) {
-                    return Ok(());
+            if event::poll(next_refresh.saturating_duration_since(Instant::now()))? {
+                if let Event::Key(key) = event::read()? {
+                    if self.handle_key(key) {
+                        return Ok(());
+                    }
                 }
+            }
+            if Instant::now() >= next_refresh {
+                self.refresh_log(load_log(&self.included_branches));
+                if let Some(pane) = &mut self.branches {
+                    pane.refresh(load_branches());
+                }
+                next_refresh = Instant::now() + REFRESH_INTERVAL;
             }
         }
     }
@@ -473,6 +534,51 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_refresh_preserves_navigation_and_clamps_after_removal() {
+        let mut app = app(10, 3);
+        app.move_down(7);
+        let offset = app.offset;
+        app.refresh_log(Ok((0..12).map(|i| Line::from(format!("* {i}"))).collect()));
+        assert_eq!(app.selected, 7);
+        assert_eq!(app.offset, offset);
+        app.refresh_log(Ok(vec![Line::from("only entry")]));
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.offset, 0);
+        app.refresh_log(Err(io::Error::other("refresh failed").into()));
+        assert_eq!(app.lines.len(), 1);
+        assert_eq!(app.log_error.as_deref(), Some("refresh failed"));
+        app.refresh_log(Ok(Vec::new()));
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.offset, 0);
+        assert!(app.log_error.is_none());
+    }
+
+    #[test]
+    fn branch_refresh_preserves_filter_and_focused_reference() {
+        let mut pane = BranchPane::new(Ok(vec![
+            "* refs/heads/main".into(),
+            "  refs/heads/feature".into(),
+        ]));
+        pane.filter = "heads".into();
+        pane.editing_filter = true;
+        pane.update_filter();
+        pane.state.select(Some(1));
+        pane.refresh(Ok(vec![
+            "* refs/heads/feature".into(),
+            "  refs/heads/main".into(),
+        ]));
+        assert_eq!(pane.state.selected(), Some(0));
+        assert_eq!(pane.filter, "heads");
+        assert!(pane.editing_filter);
+        pane.refresh(Err(io::Error::other("refresh failed")));
+        assert_eq!(pane.entries.len(), 2);
+        assert!(pane.error.is_some());
+        pane.refresh(Ok(Vec::new()));
+        assert_eq!(pane.state.selected(), None);
+        assert!(pane.error.is_none());
+    }
 
     fn app(count: usize, height: usize) -> App {
         let mut app = App::new((0..count).map(|i| Line::from(format!("* {i}"))).collect());
