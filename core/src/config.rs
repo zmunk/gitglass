@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fs, io, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use serde::Deserialize;
+use ratatui::style::Color;
+use serde::{Deserialize, Deserializer};
 
 pub type Key = (KeyCode, KeyModifiers);
 
@@ -58,6 +59,39 @@ impl DefaultCommand {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DiffConfig {
+    #[serde(deserialize_with = "deserialize_color")]
+    pub removed_color: Color,
+    #[serde(deserialize_with = "deserialize_optional_color")]
+    pub line_number_color: Option<Color>,
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            removed_color: Color::Red,
+            line_number_color: None,
+        }
+    }
+}
+
+fn deserialize_optional_color<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Color>, D::Error> {
+    deserialize_color(deserializer).map(Some)
+}
+
+fn deserialize_color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Color, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    value.parse().map_err(|_| {
+        serde::de::Error::custom(format!(
+            "Invalid color {value:?}; expected a named color or #RRGGBB"
+        ))
+    })
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -68,6 +102,8 @@ struct Config {
     log: KeybindingsSection,
     #[serde(default)]
     branch: KeybindingsSection,
+    #[serde(default)]
+    diff: DiffConfig,
 }
 
 #[derive(Debug)]
@@ -325,6 +361,21 @@ pub fn load_log_bindings() -> io::Result<Vec<Binding>> {
         .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
 }
 
+pub fn parse_diff_config(contents: &str) -> io::Result<DiffConfig> {
+    let config: Config = toml::from_str(contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(config.diff)
+}
+
+/// Load diff colors, using defaults when the configuration is absent.
+pub fn load_diff_config() -> io::Result<DiffConfig> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(DiffConfig::default());
+    };
+    parse_diff_config(&contents)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
 /// Load the command to run when invoked without arguments.
 pub fn load_default_command() -> io::Result<Option<DefaultCommand>> {
     let Some((path, contents)) = load_contents()? else {
@@ -371,6 +422,66 @@ fn load_contents() -> io::Result<Option<(PathBuf, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diff_colors_default_to_red_and_accept_named_and_hex_colors() {
+        for contents in ["", "[diff]"] {
+            assert_eq!(
+                parse_diff_config(contents).unwrap().removed_color,
+                Color::Red
+            );
+        }
+        for (value, expected) in [
+            ("lightred", Color::LightRed),
+            ("#e06c75", Color::Rgb(224, 108, 117)),
+        ] {
+            let contents = format!("[diff]\nremoved_color = '{value}'");
+            assert_eq!(
+                parse_diff_config(&contents).unwrap().removed_color,
+                expected
+            );
+            assert!(parse_config(&contents).unwrap().is_empty());
+            assert!(parse_log_config(&contents).unwrap().is_empty());
+            assert!(parse_branch_config(&contents).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn line_number_colors_are_optional_and_accept_named_and_hex_colors() {
+        for contents in ["", "[diff]", "[diff]\nremoved_color = 'magenta'"] {
+            assert_eq!(parse_diff_config(contents).unwrap().line_number_color, None);
+        }
+        for (value, expected) in [
+            ("darkgray", Color::DarkGray),
+            ("#808090", Color::Rgb(128, 128, 144)),
+        ] {
+            let contents = format!("[diff]\nline_number_color = '{value}'");
+            let config = parse_diff_config(&contents).unwrap();
+            assert_eq!(config.line_number_color, Some(expected));
+            assert_eq!(config.removed_color, Color::Red);
+            assert!(parse_config(&contents).unwrap().is_empty());
+            assert!(parse_log_config(&contents).unwrap().is_empty());
+            assert!(parse_branch_config(&contents).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn diff_colors_reject_invalid_values_and_unknown_settings() {
+        for contents in [
+            "[diff]\nremoved_color = 'not-a-color'",
+            "[diff]\nremoved_color = '#xyzxyz'",
+            "[diff]\nremoved_color = 42",
+            "[diff]\nunknown_color = 'red'",
+            "[diff]\nline_number_color = 'not-a-color'",
+            "[diff]\nline_number_color = '#xyzxyz'",
+            "[diff]\nline_number_color = 42",
+        ] {
+            assert_eq!(
+                parse_diff_config(contents).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
 
     #[test]
     fn branch_bindings_are_independent_and_reserve_builtins() {

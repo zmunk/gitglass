@@ -121,8 +121,26 @@ available:
 | **Preview** | Index content | Read-only |
 
 Navigate changes with `j`/`k`, toggle line/hunk mode with `Tab`, and use
-`v` for anchored multi-line selection.  Changes apply immediately — there is
+`v` for anchored multi-line selection. While selecting, `o` swaps the cursor
+and anchor so you can adjust the other end without changing the selected range.
+Changes apply immediately — there is
 no commit step.  See the on-screen footer for the full control reference.
+
+Configure the removed-line and line-number colors in `$XDG_CONFIG_HOME/gitglass/config.toml`
+(or `~/.config/gitglass/config.toml`):
+
+```toml
+[diff]
+removed_color = "#e06c75"
+line_number_color = "darkgray"
+```
+
+The default is `"red"` (your terminal's ANSI red). Named colors such as
+`"lightred"` and `"magenta"`, or hex colors in `"#RRGGBB"` format, are supported.
+`removed_color` affects removed lines in both Working and Staged diffs.
+`line_number_color` affects only the numbers in all three tabs, preserving
+selection backgrounds and content colors. When omitted, numbers inherit the
+line's color as before.
 
 ## Workspace structure
 

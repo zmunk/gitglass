@@ -73,6 +73,13 @@ fn run() -> Result<()> {
                 bail!("gitglass diff requires exactly one file argument (got {args:?})");
             }
 
+            let config = gitglass_core::config::load_diff_config()
+                .context("Cannot load gitglass configuration")?;
+            let theme = gitglass_diff::theme::Theme {
+                removed_color: config.removed_color,
+                line_number_color: config.line_number_color,
+                ..Default::default()
+            };
             let file_path = PathBuf::from(&args[0]);
             let cwd = env::current_dir()
                 .context("Cannot determine current working directory")?
@@ -91,7 +98,7 @@ fn run() -> Result<()> {
 
             let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
 
-            gitglass_diff::run(&mut terminal, repo, snapshot, &file_name)
+            gitglass_diff::run(&mut terminal, repo, snapshot, &file_name, theme)
                 .context("Diff TUI exited with an error")?;
 
             Ok(())

@@ -278,6 +278,11 @@ impl App {
             KeyCode::Char('v') if self.nav[self.tab].mode == Mode::Line && !self.selecting() => {
                 self.nav[self.tab].anchor = self.nav[self.tab].cursor;
             }
+            KeyCode::Char('o') if self.selecting() => {
+                let nav = &mut self.nav[self.tab];
+                std::mem::swap(&mut nav.cursor, &mut nav.anchor);
+                nav.follow_cursor = true;
+            }
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(true),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(false),
             KeyCode::Char(' ') | KeyCode::Char('d') if self.valid => {
@@ -417,10 +422,10 @@ impl App {
                         frame,
                         body,
                         screen + top_padding,
-                        &format!(
-                            "{:>5}   {}",
+                        numbered_line(
                             self.preview_scroll + screen + 1,
-                            display_text(text)
+                            format!("   {}", display_text(text)),
+                            self.theme.line_number_color,
                         ),
                         Style::default(),
                     );
@@ -459,7 +464,7 @@ impl App {
                 let (mark, color) = match row.kind {
                     Kind::Context => (' ', None),
                     Kind::Add => ('+', Some(Color::Green)),
-                    Kind::Remove => ('-', Some(Color::Red)),
+                    Kind::Remove => ('-', Some(self.theme.removed_color)),
                 };
                 let mut style = Style::default();
                 if let Some(color) = color {
@@ -483,7 +488,11 @@ impl App {
                 } else {
                     row.new + 1
                 };
-                let line = format!("{number:>5} {mark} {}", display_text(&row.text));
+                let line = numbered_line(
+                    number,
+                    format!(" {mark} {}", display_text(&row.text)),
+                    self.theme.line_number_color,
+                );
                 let rect = Rect::new(
                     body.x,
                     body.y + (screen + top_padding) as u16,
@@ -506,7 +515,7 @@ impl App {
         let mut lines = vec![
             Line::raw(footer),
             Line::raw(
-                "j/k: move  [/]: tabs  Tab: line/hunk  v: select  Esc: cancel/center  Ctrl-U/D: scroll  ←/→: pan  q: quit",
+                "j/k: move  [/]: tabs  Tab: line/hunk  v: select  o: swap ends  Esc: cancel/center  Ctrl-U/D: scroll  ←/→: pan  q: quit",
             ),
         ];
         if let Some(request) = &self.confirmation {
@@ -549,7 +558,7 @@ impl App {
             );
         }
     }
-    fn render_row(&self, frame: &mut Frame, body: Rect, row: usize, text: &str, style: Style) {
+    fn render_row(&self, frame: &mut Frame, body: Rect, row: usize, text: Line<'_>, style: Style) {
         frame.render_widget(
             Paragraph::new(text)
                 .style(style)
@@ -558,6 +567,14 @@ impl App {
         );
     }
 }
+fn numbered_line(number: usize, text: String, color: Option<Color>) -> Line<'static> {
+    let style = color.map_or_else(Style::default, |color| Style::default().fg(color));
+    Line::from(vec![
+        Span::styled(format!("{number:>5}"), style),
+        Span::raw(text),
+    ])
+}
+
 // Return the first real row and the blank rows above it. Signed viewport
 // origins allow centering near the start without inventing diff rows.
 fn centered_viewport(cursor: usize, len: usize, height: usize) -> (usize, usize) {
@@ -632,6 +649,62 @@ mod tests {
         key(&mut a, 'j');
         assert!(a.nav[0].cursor.unwrap() > cursor + 1);
     }
+    #[test]
+    fn selection_can_swap_ends_and_extend_from_either_end() {
+        for tab in 0..2 {
+            let mut a = app();
+            if tab == 1 {
+                a.snapshot.index = a.snapshot.work.clone();
+                a = App::new(a.snapshot);
+            }
+            a.tab = tab;
+            a.key(KeyCode::Tab);
+            key(&mut a, 'v');
+            let start = a.nav[tab].cursor;
+            key(&mut a, 'j');
+            key(&mut a, 'j');
+            let end = a.nav[tab].cursor;
+            assert_ne!(start, end);
+            let selected = a.selected();
+            a.nav[tab].follow_cursor = false;
+            key(&mut a, 'o');
+            assert_eq!(a.nav[tab].cursor, start);
+            assert_eq!(a.nav[tab].anchor, end);
+            assert_eq!(a.selected(), selected);
+            assert!(a.nav[tab].follow_cursor);
+            assert!(a.selecting());
+            key(&mut a, 'o');
+            assert_eq!(a.nav[tab].cursor, end);
+            assert_eq!(a.nav[tab].anchor, start);
+            assert_eq!(a.selected(), selected);
+            key(&mut a, 'o');
+            key(&mut a, 'j');
+            assert_eq!(a.nav[tab].cursor, start.map(|i| i + 1));
+            assert_eq!(a.nav[tab].anchor, end);
+            assert_eq!(a.selected().len(), selected.len() - 1);
+        }
+    }
+
+    #[test]
+    fn swapping_ends_is_a_noop_without_selection_and_for_single_line() {
+        let mut a = app();
+        for tab in 0..3 {
+            a.tab = tab;
+            let cursor = a.nav[tab.min(1)].cursor;
+            key(&mut a, 'o');
+            assert_eq!(a.nav[tab.min(1)].cursor, cursor);
+            assert!(!a.selecting());
+        }
+        a.tab = 0;
+        a.key(KeyCode::Tab);
+        key(&mut a, 'v');
+        let selected = a.selected();
+        key(&mut a, 'o');
+        assert_eq!(a.selected(), selected);
+        assert_eq!(a.nav[0].cursor, a.nav[0].anchor);
+        assert!(a.selecting());
+    }
+
     #[test]
     fn tab_local_state_hunks_and_preview() {
         let mut a = app();
@@ -897,6 +970,67 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn removed_lines_use_configured_color_in_both_diff_tabs() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut a = app();
+        a.snapshot.head = a.snapshot.index.clone();
+        a.snapshot.index = a.snapshot.work.clone();
+        a.snapshot.work = a.snapshot.head.clone();
+        a = App::new(a.snapshot);
+        a.theme.removed_color = Color::Rgb(224, 108, 117);
+        let mut terminal = Terminal::new(TestBackend::new(100, 25)).unwrap();
+        for tab in 0..2 {
+            a.tab = tab;
+            terminal.draw(|f| a.draw(f, "test")).unwrap();
+            let buffer = terminal.backend().buffer();
+            let mut removed = 0;
+            for (i, row) in a.diffs[tab].rows.iter().enumerate() {
+                if row.kind == Kind::Remove {
+                    let y = (i + a.nav[tab].top_padding) as u16 + 2;
+                    assert_eq!(buffer[(0, y)].fg, a.theme.removed_color);
+                    removed += 1;
+                }
+            }
+            assert!(removed > 0);
+        }
+    }
+
+    #[test]
+    fn line_number_color_is_independent_in_all_tabs() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut a = app();
+        a.snapshot.head = a.snapshot.work.clone();
+        a = App::new(a.snapshot);
+        let number_color = Color::Rgb(128, 128, 144);
+        a.theme.line_number_color = Some(number_color);
+        let mut terminal = Terminal::new(TestBackend::new(100, 25)).unwrap();
+        for tab in 0..3 {
+            a.tab = tab;
+            terminal.draw(|f| a.draw(f, "test")).unwrap();
+            let configured = terminal.backend().buffer().clone();
+            a.theme.line_number_color = None;
+            terminal.draw(|f| a.draw(f, "test")).unwrap();
+            let original = terminal.backend().buffer();
+            let mut numbers = 0;
+            for y in 2..20 {
+                for x in 0..100 {
+                    let before = &original[(x, y)];
+                    let after = &configured[(x, y)];
+                    assert_eq!(before.symbol(), after.symbol());
+                    assert_eq!(before.bg, after.bg);
+                    if x < 5 && after.fg == number_color {
+                        numbers += 1;
+                    } else {
+                        assert_eq!(before.fg, after.fg);
+                    }
+                }
+            }
+            assert!(numbers > 0);
+            a.theme.line_number_color = Some(number_color);
+        }
+    }
+
     #[test]
     fn hunk_highlight_excludes_context() {
         use ratatui::{backend::TestBackend, Terminal};

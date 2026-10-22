@@ -4,6 +4,8 @@ use ratatui::style::Color;
 pub struct Theme {
     pub selection_bg: Color,
     pub cursor_bg: Color,
+    pub removed_color: Color,
+    pub line_number_color: Option<Color>,
 }
 
 impl Default for Theme {
@@ -11,6 +13,8 @@ impl Default for Theme {
         Self {
             selection_bg: Color::Rgb(64, 64, 64),
             cursor_bg: Color::Rgb(80, 80, 80),
+            removed_color: Color::Red,
+            line_number_color: None,
         }
     }
 }

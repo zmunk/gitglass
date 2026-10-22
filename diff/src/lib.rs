@@ -31,8 +31,10 @@ pub fn run(
     repo: Repo,
     snapshot: repo::Snapshot,
     file_name: &str,
+    theme: theme::Theme,
 ) -> Result<()> {
     let mut app = App::new(snapshot);
+    app.theme = theme;
     let mut refresh_at = Instant::now();
 
     loop {
