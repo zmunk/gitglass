@@ -4,6 +4,12 @@ A Ratatui viewer for `git log --oneline --graph --decorate`. The selected
 line is bold; Git colors and graph connector lines are preserved. Keyboard
 hints appear in gray.
 
+Commits on HEAD's first-parent history have display-only relative labels:
+`HEAD^` and `HEAD~2` only. All immediate parents of HEAD are labeled;
+when HEAD is a merge, its other parents use `HEAD^2`, `HEAD^3`, etc. These follow Git revision
+semantics (not visible row numbers), appear alongside existing decorations,
+and refresh with the log. They do not create Git tags.
+
 ## Run
 
 With Rust installed, run `cargo run --release` from this project inside a Git

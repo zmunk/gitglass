@@ -4,7 +4,7 @@
 //! start the event loop; it manages its own terminal lifecycle.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     io,
     process::Command,
@@ -555,6 +555,58 @@ fn load_branches() -> io::Result<Vec<String>> {
         .collect())
 }
 
+// Follow actual parent links, not graph row positions: merge side branches do
+// not advance HEAD~N. Only HEAD's other parents receive HEAD^N labels.
+fn head_relative_labels(history: &str) -> BTreeMap<String, Vec<String>> {
+    let mut labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (depth, line) in history.lines().take(3).enumerate() {
+        let mut fields = line.split_whitespace();
+        let Some(hash) = fields.next() else {
+            continue;
+        };
+        if depth > 0 {
+            let label = if depth == 1 {
+                "HEAD^".to_owned()
+            } else {
+                format!("HEAD~{depth}")
+            };
+            labels.entry(hash.to_owned()).or_default().push(label);
+        } else {
+            for (index, parent) in fields.enumerate().skip(1) {
+                labels
+                    .entry(parent.to_owned())
+                    .or_default()
+                    .push(format!("HEAD^{}", index + 1));
+            }
+        }
+    }
+    labels
+}
+
+fn decorate_relative_log(output: &str, labels: &BTreeMap<String, Vec<String>>) -> String {
+    output
+        .lines()
+        .map(|line| {
+            // Explicit fields keep subjects and graph-only lines out of parsing.
+            let fields: Vec<_> = line.splitn(4, '\0').collect();
+            let [prefix, hash, decorations, subject] = fields.as_slice() else {
+                return line.to_owned();
+            };
+            let mut decorations = decorations.to_string();
+            if let Some(labels) = labels.get(*hash) {
+                let label = format!("\x1b[36m{}\x1b[m", labels.join(", "));
+                if let Some(end) = decorations.rfind(')') {
+                    decorations.insert_str(end, &format!(", {label}"));
+                } else {
+                    decorations = format!(" ({label})");
+                }
+            }
+            format!("{prefix}{decorations} {subject}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn load_log(branches: &BTreeSet<String>) -> Result<Vec<Line<'static>>, Box<dyn Error>> {
     if branches.is_empty() {
         return Ok(Vec::new());
@@ -565,7 +617,7 @@ fn load_log(branches: &BTreeSet<String>) -> Result<Vec<Line<'static>>, Box<dyn E
     command.args([
         "--no-pager",
         "log",
-        "--oneline",
+        "--format=%C(auto)%h%C(reset)%x00%H%x00%C(auto)%d%C(reset)%x00%s",
         "--graph",
         "--decorate",
         "--color=always",
@@ -580,7 +632,23 @@ fn load_log(branches: &BTreeSet<String>) -> Result<Vec<Line<'static>>, Box<dyn E
         ))
         .into());
     }
-    Ok(output.stdout.into_text()?.lines)
+    let history = Command::new("git")
+        .args([
+            "rev-list",
+            "--first-parent",
+            "--max-count=3",
+            "--parents",
+            "HEAD",
+            "--",
+        ])
+        .output()?;
+    let labels = if history.status.success() {
+        head_relative_labels(&String::from_utf8_lossy(&history.stdout))
+    } else {
+        BTreeMap::new()
+    };
+    let decorated = decorate_relative_log(&String::from_utf8_lossy(&output.stdout), &labels);
+    Ok(decorated.as_bytes().into_text()?.lines)
 }
 
 /// Run the interactive Git log TUI.
@@ -603,6 +671,39 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_labels_follow_first_parents_and_include_merge_parents() {
+        let labels = head_relative_labels("aaaa bbbb dddd eeee\nbbbb cccc\ncccc ffff\nffff\n");
+        assert!(!labels.contains_key("aaaa"));
+        assert!(!labels.contains_key("ffff"));
+        assert_eq!(labels["bbbb"], vec!["HEAD^"]);
+        assert_eq!(labels["cccc"], vec!["HEAD~2"]);
+        assert_eq!(labels["dddd"], vec!["HEAD^2"]);
+        assert_eq!(labels["eeee"], vec!["HEAD^3"]);
+        assert!(head_relative_labels("aaaa\n").is_empty());
+        assert!(head_relative_labels("").is_empty());
+    }
+
+    #[test]
+    fn relative_decorations_preserve_refs_subjects_colors_and_graph_lines() {
+        let labels = head_relative_labels("aaaa bbbb cccc\nbbbb cccc\ncccc\n");
+        let output = concat!(
+            "* aaaa\0aaaa\0 (HEAD -> main, origin/main)\0tip\n",
+            "| * \x1b[33mbbbb\x1b[m\0bbbb\0\0subject (untouched)\n",
+            "|/\n",
+            "* cccc\0cccc\0\x1b[32m (topic)\x1b[m\0older\n",
+        );
+        let decorated = decorate_relative_log(output, &labels);
+        let text = decorated.as_bytes().into_text().unwrap();
+        let lines: Vec<String> = text.lines.iter().map(ToString::to_string).collect();
+        assert_eq!(lines[0], "* aaaa (HEAD -> main, origin/main) tip");
+        assert_eq!(lines[1], "| * bbbb (HEAD^) subject (untouched)");
+        assert_eq!(lines[2], "|/");
+        assert_eq!(lines[3], "* cccc (topic, HEAD^2, HEAD~2) older");
+        assert_eq!(commit_hash(&text.lines[1]).as_deref(), Some("bbbb"));
+        assert!(decorated.contains("\x1b[33mbbbb\x1b[m"));
+    }
 
     #[test]
     fn configured_bindings_appear_in_log_footer_only() {
