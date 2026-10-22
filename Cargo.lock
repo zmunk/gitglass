@@ -189,7 +189,9 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "ratatui",
+ "serde",
  "signal-hook",
+ "toml",
 ]
 
 [[package]]
@@ -212,6 +214,7 @@ version = "0.1.0"
 dependencies = [
  "ansi-to-tui",
  "crossterm",
+ "gitglass-core",
  "ratatui",
 ]
 
@@ -223,8 +226,6 @@ dependencies = [
  "crossterm",
  "gitglass-core",
  "ratatui",
- "serde",
- "toml",
 ]
 
 [[package]]

@@ -13,6 +13,10 @@ use std::{
 
 use ansi_to_tui::IntoText;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use gitglass_core::{
+    actions,
+    config::{self, Binding},
+};
 use ratatui::{
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
@@ -139,6 +143,8 @@ struct App {
     branches: Option<BranchPane>,
     included_branches: BTreeSet<String>,
     log_error: Option<String>,
+    action_message: Option<String>,
+    log_hints: String,
 }
 
 impl App {
@@ -151,6 +157,15 @@ impl App {
             branches: None,
             included_branches: BTreeSet::new(),
             log_error: None,
+            action_message: None,
+            log_hints: "j/k: move  Ctrl-d/u: half page  b: branches  q: quit".into(),
+        }
+    }
+
+    fn include_binding_hints(&mut self, bindings: &[Binding]) {
+        for binding in bindings {
+            self.log_hints.push_str("  ");
+            self.log_hints.push_str(&binding.help_text);
         }
     }
 
@@ -360,16 +375,20 @@ impl App {
         } else if self.branches.is_some() {
             "/: filter  Space: toggle  a: all/none  j/k: move  b: close  Esc: clear/close"
         } else {
-            "j/k: move  Ctrl-d/u: half page  b: branches  q: quit"
+            self.log_hints.as_str()
         };
         frame.render_widget(
-            Paragraph::new(self.log_error.as_deref().unwrap_or(hints)).style(Style::default().fg(
-                if self.log_error.is_some() {
-                    Color::Red
-                } else {
-                    Color::DarkGray
-                },
-            )),
+            Paragraph::new(
+                self.log_error
+                    .as_deref()
+                    .or(self.action_message.as_deref())
+                    .unwrap_or(hints),
+            )
+            .style(Style::default().fg(if self.log_error.is_some() {
+                Color::Red
+            } else {
+                Color::DarkGray
+            })),
             footer,
         );
     }
@@ -386,13 +405,35 @@ impl App {
         }
     }
 
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal, bindings: &[Binding]) -> io::Result<()> {
+        self.include_binding_hints(bindings);
+        let cwd = std::env::current_dir()?;
         let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
         loop {
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(next_refresh.saturating_duration_since(Instant::now()))? {
                 if let Event::Key(key) = event::read()? {
-                    if self.handle_key(key) {
+                    let mut handled = false;
+                    if key.kind != KeyEventKind::Release && self.branches.is_none() {
+                        self.action_message = None;
+                        let key = config::normalize_key(key.code, key.modifiers);
+                        if let Some(binding) = bindings.iter().find(|binding| binding.key == key) {
+                            let hash = self.lines.get(self.selected).and_then(commit_hash);
+                            match hash.as_deref().map(resolve_commit_hash).transpose() {
+                                Ok(hash) => {
+                                    self.action_message = actions::execute_hash(
+                                        terminal,
+                                        binding,
+                                        hash.as_deref(),
+                                        &cwd,
+                                    )?;
+                                }
+                                Err(error) => self.action_message = Some(error.to_string()),
+                            }
+                            handled = true;
+                        }
+                    }
+                    if !handled && self.handle_key(key) {
                         return Ok(());
                     }
                 }
@@ -406,6 +447,32 @@ impl App {
             }
         }
     }
+}
+
+fn commit_hash(line: &Line<'_>) -> Option<String> {
+    let text: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let hash = text
+        .trim_start_matches(|c: char| c.is_whitespace() || "*|\\/_.-".contains(c))
+        .split_whitespace()
+        .next()?;
+    (hash.len() >= 4 && hash.len() <= 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| hash.to_owned())
+}
+
+fn resolve_commit_hash(hash: &str) -> io::Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("{hash}^{{commit}}")])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn branch_ref(entry: &str) -> &str {
@@ -521,11 +588,13 @@ fn load_log(branches: &BTreeSet<String>) -> Result<Vec<Line<'static>>, Box<dyn E
 /// Fetches Git data before entering raw mode, so Git errors leave the
 /// terminal untouched.  Manages its own terminal lifecycle.
 pub fn run() -> Result<(), Box<dyn Error>> {
+    let bindings = config::load_log_bindings()?;
+    gitglass_core::prepare_signals()?;
     let included_branches = initial_branches()?;
     let mut app = App::new(load_log(&included_branches)?);
     app.included_branches = included_branches;
     let mut terminal = ratatui::init();
-    let result = app.run(&mut terminal);
+    let result = app.run(&mut terminal, &bindings);
     ratatui::restore();
     result?;
     Ok(())
@@ -534,6 +603,68 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_bindings_appear_in_log_footer_only() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let bindings = config::parse_log_config(
+            r#"
+[[log.keybindings]]
+key = "y"
+command = 'copy "$HASH"'
+description = "Copy commit hash"
+[[log.keybindings]]
+key = "x"
+command = 'echo "$HASH"'
+"#,
+        )
+        .unwrap();
+        let mut app = App::new(vec![Line::from("* abc1234 subject")]);
+        app.include_binding_hints(&bindings);
+        let mut terminal = Terminal::new(TestBackend::new(160, 5)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let footer = |terminal: &Terminal<TestBackend>| -> String {
+            (0..160)
+                .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+                .collect()
+        };
+        let text = footer(&terminal);
+        assert!(text.contains("y  Copy commit hash"));
+        assert!(text.contains("x  echo \"$HASH\""));
+        app.branches = Some(BranchPane::new(Ok(Vec::new())));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert!(!footer(&terminal).contains("Copy commit hash"));
+        app.branches = None;
+        app.action_message = Some("Commit hash copied".into());
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert!(footer(&terminal).starts_with("Commit hash copied"));
+    }
+
+    #[test]
+    fn extracts_hash_from_styled_commit_lines_only() {
+        use ratatui::text::Span;
+
+        let line = Line::from(vec![
+            Span::raw("| * "),
+            Span::raw("abc1234"),
+            Span::raw(" subject"),
+        ]);
+        assert_eq!(commit_hash(&line).as_deref(), Some("abc1234"));
+        for text in ["|\\", "| |/", "", "* not-a-hash subject"] {
+            assert_eq!(commit_hash(&Line::from(text)), None);
+        }
+    }
+
+    #[test]
+    fn y_does_not_copy_while_filtering_branches() {
+        let mut app = App::new(vec![Line::from("* abc1234 subject")]);
+        let mut pane = BranchPane::new(Ok(vec!["  refs/heads/my-branch".into()]));
+        pane.editing_filter = true;
+        app.branches = Some(pane);
+        assert!(!app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)));
+        assert_eq!(app.branches.as_ref().unwrap().filter, "y");
+    }
 
     #[test]
     fn auto_refresh_preserves_navigation_and_clamps_after_removal() {

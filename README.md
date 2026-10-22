@@ -64,6 +64,20 @@ Keys support `ctrl-`, `alt-`, and `shift-` modifiers.  Commands run through
 `sh -c` with the focused file path exported as `$FILE`.  See the expanded
 help (`?`) for the full key reference.
 
+Log commands support the same options under `[[log.keybindings]]`, with the
+selected commit's full hash exported as `$HASH`:
+
+```toml
+[[log.keybindings]]
+key = "y"
+command = 'copy "$HASH"'
+description = "Copy commit hash"
+success_message = "Commit hash copied"
+```
+
+The `copy` command must be available to `sh -c`. See [log documentation](log/README.md)
+for selection behavior and command options.
+
 ### `gitglass diff <file>`
 
 Open a single tracked file for partial-content staging.  Three tabs are

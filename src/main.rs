@@ -19,7 +19,7 @@ fn run() -> Result<()> {
     let mut args: Vec<OsString> = env::args_os().skip(1).collect();
 
     if args.is_empty() {
-        let default = gitglass_status::config::load_default_command()
+        let default = gitglass_core::config::load_default_command()
             .context("Cannot load gitglass configuration")?;
         if let Some(command) = default {
             args.push(OsString::from(command.as_str()));
@@ -44,7 +44,7 @@ fn run() -> Result<()> {
 
             // Load config *before* terminal init so parse errors print normally.
             let bindings =
-                gitglass_status::config::load().context("Cannot load gitglass configuration")?;
+                gitglass_core::config::load().context("Cannot load gitglass configuration")?;
 
             prepare_signals().context("Cannot prepare signal handlers")?;
 

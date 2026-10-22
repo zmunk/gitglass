@@ -40,6 +40,36 @@ This only filters history—it does not check branches out.
 Git log errors are reported before entering the terminal UI; branch-loading errors
 appear in the branch pane.
 
+## Custom keybindings
+
+Log bindings use the same global config and command options as status:
+`$XDG_CONFIG_HOME/gitglass/config.toml` (or `~/.config/gitglass/config.toml`).
+For example:
+
+```toml
+[[log.keybindings]]
+key = "y"
+command = 'copy "$HASH"'
+description = "Copy commit hash"
+success_message = "Commit hash copied"
+```
+
+Commands run through `sh -c` with the selected commit's **full hash** exported
+as `$HASH`, not substituted into shell source. `copy` must be available to
+that shell (interactive shell aliases/functions are not automatically loaded).
+There is no built-in clipboard command or default `y` binding.
+Configured bindings appear in the log footer using their descriptions (or
+commands when no description is set).
+Bindings apply only while the log has focus, not while navigating or filtering
+branches. Commands referencing `$HASH` or `${HASH}` require a selected commit;
+graph-only lines and empty logs do not provide one.
+Built-in log keys cannot be overridden, and duplicate bindings are rejected.
+
+As in status, `suspend` defaults to `true`; set `suspend = false` to capture
+command output without suspending the UI. `leave_alternate_screen`,
+`success_message`, and `exit_messages` work the same way as status. Command
+feedback appears in the footer until the next keypress in the log.
+
 ## Development
 
 Run `cargo test` for navigation, scrolling, and bold-selection rendering tests.

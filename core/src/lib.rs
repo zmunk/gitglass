@@ -1,3 +1,6 @@
+pub mod actions;
+pub mod config;
+
 use std::io;
 
 use crossterm::{
@@ -44,20 +47,26 @@ pub fn init_terminal() -> io::Result<(Terminal<CrosstermBackend<io::Stderr>>, Te
 /// buffer and survives after the TUI exits.  Set it to `false` when the
 /// child process is itself a TUI application that manages its own alternate
 /// screen — this avoids a distracting flash as control transitions.
-pub fn suspend_terminal(
-    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+pub fn suspend_terminal<W: io::Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
     leave_alternate_screen: bool,
 ) -> io::Result<()> {
     terminal.show_cursor()?;
     disable_raw_mode()?;
     if leave_alternate_screen {
-        execute!(io::stderr(), LeaveAlternateScreen, crossterm::cursor::Show)?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            crossterm::cursor::Show
+        )?;
     }
     Ok(())
 }
 
 /// Restore the TUI after an external command has finished.
-pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stderr>>) -> io::Result<()> {
+pub fn restore_terminal<W: io::Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+) -> io::Result<()> {
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
