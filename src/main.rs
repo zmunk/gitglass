@@ -10,6 +10,7 @@ Commands:
   status            Show Git status with configurable keybindings
   diff <file>       Interactively stage/unstage content changes in a file
   log               Interactive Git log viewer with branch filtering
+  branch            List and switch branches with configurable keybindings
   help              Show this help message
 
 With no command, runs the configured default_command, or shows help.
@@ -53,6 +54,18 @@ fn run() -> Result<()> {
             gitglass_status::run(&mut terminal, &bindings)
                 .context("Status TUI exited with an error")?;
 
+            Ok(())
+        }
+        Some("branch") => {
+            if !args.is_empty() {
+                bail!("gitglass branch takes no arguments (got {args:?})");
+            }
+            let bindings = gitglass_core::config::load_branch_bindings()
+                .context("Cannot load gitglass configuration")?;
+            prepare_signals().context("Cannot prepare signal handlers")?;
+            let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
+            gitglass_branch::run(&mut terminal, &bindings)
+                .context("Branch TUI exited with an error")?;
             Ok(())
         }
         Some("diff") => {

@@ -37,6 +37,19 @@ fn hash_command(binding: &Binding, hash: Option<&str>, cwd: &Path) -> Command {
     command
 }
 
+fn branch_command(binding: &Binding, branch: Option<&str>, cwd: &Path) -> Command {
+    let mut command = command(binding, None, cwd);
+    match branch {
+        Some(branch) => {
+            command.env("BRANCH", branch);
+        }
+        None => {
+            command.env_remove("BRANCH");
+        }
+    }
+    command
+}
+
 // Keep stdin/stdout attached to the terminal and forward stderr while capturing
 // it for failure feedback. Drain concurrently so verbose commands cannot block.
 fn run_command(mut command: Command) -> io::Result<(ExitStatus, Vec<u8>)> {
@@ -125,6 +138,22 @@ pub fn execute_hash<W: Write>(
     execute_command(terminal, binding, hash_command(binding, hash, cwd))
 }
 
+/// Execute a branch action, exporting the selected branch name as shell data.
+pub fn execute_branch<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    binding: &Binding,
+    branch: Option<&str>,
+    cwd: &Path,
+) -> io::Result<Option<String>> {
+    if branch.is_none() && crate::config::requires_variable(&binding.command, "BRANCH") {
+        return Ok(Some(format!(
+            "{}: This action requires a focused branch",
+            binding.label
+        )));
+    }
+    execute_command(terminal, binding, branch_command(binding, branch, cwd))
+}
+
 fn execute_command<W: Write>(
     terminal: &mut Terminal<CrosstermBackend<W>>,
     binding: &Binding,
@@ -165,6 +194,23 @@ mod tests {
     use super::*;
     use crate::config::{parse_key, requires_file};
     use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn branch_name_is_environment_data_and_missing_selection_clears_it() {
+        let name = "topic; printf injected";
+        let output = branch_command(
+            &binding("printf '%s' \"$BRANCH\""),
+            Some(name),
+            Path::new("/"),
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, name.as_bytes());
+        assert!(branch_command(&binding("true"), None, Path::new("/"))
+            .get_envs()
+            .any(|(key, value)| key == "BRANCH" && value.is_none()));
+    }
 
     #[test]
     fn commit_hash_is_environment_data_not_shell_source() {

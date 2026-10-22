@@ -45,6 +45,7 @@ struct KeybindingsSection {
 pub enum DefaultCommand {
     Status,
     Log,
+    Branch,
 }
 
 impl DefaultCommand {
@@ -52,6 +53,7 @@ impl DefaultCommand {
         match self {
             Self::Status => "status",
             Self::Log => "log",
+            Self::Branch => "branch",
         }
     }
 }
@@ -64,6 +66,8 @@ struct Config {
     status: KeybindingsSection,
     #[serde(default)]
     log: KeybindingsSection,
+    #[serde(default)]
+    branch: KeybindingsSection,
 }
 
 #[derive(Debug)]
@@ -189,6 +193,34 @@ pub fn parse_log_config(contents: &str) -> io::Result<Vec<Binding>> {
     let config: Config = toml::from_str(contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     parse_bindings(config.log.keybindings, LOG_BUILTINS)
+}
+
+pub const BRANCH_BUILTINS: &[(&str, &str)] = &[
+    ("q", "quit"),
+    ("esc", "quit"),
+    ("ctrl-c", "quit"),
+    ("j", "move down"),
+    ("k", "move up"),
+    ("down", "move down"),
+    ("up", "move up"),
+    ("ctrl-d", "half page down"),
+    ("ctrl-u", "half page up"),
+    ("?", "toggle keybinding help"),
+    ("space", "switch branch"),
+];
+
+pub fn parse_branch_config(contents: &str) -> io::Result<Vec<Binding>> {
+    let config: Config = toml::from_str(contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    parse_bindings(config.branch.keybindings, BRANCH_BUILTINS)
+}
+
+pub fn load_branch_bindings() -> io::Result<Vec<Binding>> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(Vec::new());
+    };
+    parse_branch_config(&contents)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
 }
 
 fn parse_bindings(
@@ -341,6 +373,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn branch_bindings_are_independent_and_reserve_builtins() {
+        let contents = "[[branch.keybindings]]\nkey = 'y'\ncommand = 'copy \"$BRANCH\"'";
+        assert!(parse_config(contents).unwrap().is_empty());
+        assert!(parse_log_config(contents).unwrap().is_empty());
+        assert_eq!(
+            parse_branch_config(contents).unwrap()[0].command,
+            "copy \"$BRANCH\""
+        );
+        for &(key, _) in BRANCH_BUILTINS {
+            assert!(parse_branch_config(&format!(
+                "[[branch.keybindings]]\nkey = '{key}'\ncommand = 'true'"
+            ))
+            .is_err());
+        }
+    }
+
+    #[test]
     fn log_bindings_share_configuration_without_affecting_status() {
         let contents = r#"
 [[status.keybindings]]
@@ -381,6 +430,7 @@ success_message = "Commit hash copied"
         for (name, expected) in [
             ("status", DefaultCommand::Status),
             ("log", DefaultCommand::Log),
+            ("branch", DefaultCommand::Branch),
         ] {
             let contents = format!("default_command = '{name}'\n[status]\n");
             let config: Config = toml::from_str(&contents).unwrap();

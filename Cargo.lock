@@ -177,10 +177,20 @@ name = "gitglass"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gitglass-branch",
  "gitglass-core",
  "gitglass-diff",
  "gitglass-log",
  "gitglass-status",
+]
+
+[[package]]
+name = "gitglass-branch"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "gitglass-core",
+ "ratatui",
 ]
 
 [[package]]
