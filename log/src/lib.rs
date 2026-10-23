@@ -170,6 +170,7 @@ struct App {
     log_error: Option<String>,
     action_message: Option<String>,
     log_hints: String,
+    repository_name: Option<String>,
     search: Search,
 }
 
@@ -185,6 +186,7 @@ impl App {
             log_error: None,
             action_message: None,
             log_hints: "j/k: move  Ctrl-d/u: half page  /: search  b: branches  q: quit".into(),
+            repository_name: None,
             search: Search::default(),
         }
     }
@@ -227,9 +229,23 @@ impl App {
         } else if line >= self.offset.saturating_add(self.page_height) {
             self.offset = line + 1 - self.page_height;
         }
-        self.offset = self
-            .offset
-            .min(self.lines.len().saturating_sub(self.page_height));
+        // The first two display rows are padding, not selectable log entries.
+        if self.offset == 0 && line >= self.page_height.saturating_sub(self.top_padding()) {
+            self.offset = (line + 1).saturating_sub(self.page_height).max(1);
+        }
+        let max_offset = self
+            .lines
+            .len()
+            .saturating_sub(self.page_height)
+            .max(usize::from(
+                self.lines.len() > self.page_height.saturating_sub(self.top_padding()),
+            ));
+        self.offset = self.offset.min(max_offset);
+    }
+
+    fn top_padding(&self) -> usize {
+        // Keep at least one log row usable in tiny terminals.
+        self.page_height.saturating_sub(1).min(2)
     }
 
     fn move_down(&mut self, count: usize) {
@@ -557,8 +573,19 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let [body, footer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+        let [body, footer, repository] = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(u16::from(self.repository_name.is_some())),
+        ])
+        .areas(frame.area());
+        if let Some(name) = &self.repository_name {
+            frame.render_widget(
+                Paragraph::new(name.as_str())
+                    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
+                repository,
+            );
+        }
         self.resize(usize::from(body.height));
         let (body, branch_area) = if self.branches.is_some() {
             let [log, branches] =
@@ -581,12 +608,22 @@ impl App {
             };
             frame.render_widget(Paragraph::new(message), body);
         } else {
+            let padding = if self.offset == 0 {
+                self.top_padding()
+            } else {
+                0
+            } as u16;
+            let body = ratatui::layout::Rect {
+                y: body.y + padding,
+                height: body.height.saturating_sub(padding),
+                ..body
+            };
             let items = self
                 .lines
                 .iter()
                 .enumerate()
                 .skip(self.offset)
-                .take(self.page_height)
+                .take(usize::from(body.height))
                 .map(|(index, line)| ListItem::new(self.search_line(index, line)));
             let list =
                 List::new(items).highlight_style(Style::default().add_modifier(Modifier::BOLD));
@@ -963,6 +1000,19 @@ fn load_log(branches: &BTreeSet<String>) -> Result<Vec<Line<'static>>, Box<dyn E
     Ok(decorated.as_bytes().into_text()?.lines)
 }
 
+fn display_directory(path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    if let Some(home) = home.filter(|home| home.is_absolute()) {
+        if let Ok(relative) = path.strip_prefix(home) {
+            return if relative.as_os_str().is_empty() {
+                "~".to_owned()
+            } else {
+                format!("~/{}", relative.display())
+            };
+        }
+    }
+    path.display().to_string()
+}
+
 /// Run the interactive Git log TUI.
 ///
 /// Fetches Git data before entering raw mode, so Git errors leave the
@@ -973,6 +1023,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let included_branches = initial_branches()?;
     let mut app = App::new(load_log(&included_branches)?);
     app.included_branches = included_branches;
+    let root = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()?;
+    if root.status.success() {
+        let root = String::from_utf8_lossy(&root.stdout);
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        app.repository_name = Some(display_directory(
+            std::path::Path::new(root.trim()),
+            home.as_deref(),
+        ));
+    }
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal, &bindings);
     ratatui::restore();
@@ -1015,6 +1076,68 @@ mod tests {
         assert_eq!(lines[3], "* cccc (topic, HEAD^2, HEAD~2) older");
         assert_eq!(commit_hash(&text.lines[1]).as_deref(), Some("bbbb"));
         assert!(decorated.contains("\x1b[33mbbbb\x1b[m"));
+    }
+
+    #[test]
+    fn top_padding_scrolls_away_and_returns_at_the_top() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app(20, 5);
+        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        for _ in 0..2 {
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            for y in 0..2 {
+                assert!((0..80).all(|x| buffer[(x, y)].symbol() == " "));
+            }
+            assert_eq!(buffer[(0, 2)].symbol(), "*");
+            app.move_down(8);
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            assert!(app.offset > 0);
+            assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "*");
+            app.move_up(usize::MAX);
+        }
+    }
+
+    #[test]
+    fn repository_directory_matches_status_format() {
+        use std::path::Path;
+
+        let home = Some(Path::new("/home/alex"));
+        assert_eq!(display_directory(Path::new("/home/alex"), home), "~");
+        assert_eq!(
+            display_directory(Path::new("/home/alex/projects/app"), home),
+            "~/projects/app"
+        );
+        assert_eq!(
+            display_directory(Path::new("/home/alexander/app"), home),
+            "/home/alexander/app"
+        );
+        for home in [None, Some(Path::new("")), Some(Path::new("relative"))] {
+            assert_eq!(display_directory(Path::new("/work/app"), home), "/work/app");
+        }
+    }
+
+    #[test]
+    fn repository_path_is_pinned_below_hints() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app(10, 3);
+        app.repository_name = Some("~/projects/gitglass".into());
+        let mut terminal = Terminal::new(TestBackend::new(100, 5)).unwrap();
+        for branches in [None, Some(BranchPane::new(Ok(Vec::new())))] {
+            app.branches = branches;
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let repository: String = (0..100).map(|x| buffer[(x, 4)].symbol()).collect();
+            assert_eq!(repository.trim_end(), "~/projects/gitglass");
+            assert_eq!(buffer[(0, 4)].fg, Color::Cyan);
+            assert!(buffer[(0, 4)].modifier.contains(Modifier::DIM));
+            assert_eq!(buffer[(0, 3)].fg, Color::DarkGray);
+            assert_eq!(app.page_height, 3);
+        }
+        let mut tiny = Terminal::new(TestBackend::new(1, 1)).unwrap();
+        tiny.draw(|frame| app.draw(frame)).unwrap();
     }
 
     #[test]
@@ -1178,7 +1301,7 @@ command = 'echo "$HASH"'
         app.resize(5);
         assert_eq!((app.selected, app.offset), (50, 46));
         app.resize(100);
-        assert_eq!((app.selected, app.offset), (50, 0));
+        assert_eq!((app.selected, app.offset), (50, 1));
     }
 
     #[test]
@@ -1652,12 +1775,12 @@ command = 'echo "$HASH"'
         let mut terminal = Terminal::new(TestBackend::new(40, 3)).unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| app.draw(frame)).unwrap();
-        assert_eq!(terminal.backend().buffer()[(1, 0)].bg, Color::Cyan);
-        assert_eq!(terminal.backend().buffer()[(6, 0)].bg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(1, 1)].bg, Color::Cyan);
+        assert_eq!(terminal.backend().buffer()[(6, 1)].bg, Color::Yellow);
         press(&mut app, 'n', KeyModifiers::NONE);
         terminal.draw(|frame| app.draw(frame)).unwrap();
-        assert_eq!(terminal.backend().buffer()[(1, 0)].bg, Color::Yellow);
-        assert_eq!(terminal.backend().buffer()[(6, 0)].bg, Color::Cyan);
+        assert_eq!(terminal.backend().buffer()[(1, 1)].bg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(6, 1)].bg, Color::Cyan);
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.search_line(0, &line), line);
     }
@@ -1679,17 +1802,17 @@ command = 'echo "$HASH"'
         let mut terminal = Terminal::new(TestBackend::new(80, 5)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 0)].symbol(), "*");
-        assert_eq!(buffer[(0, 0)].fg, Color::Red);
-        assert_eq!(buffer[(2, 0)].fg, Color::Yellow);
-        assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 2)].symbol(), "*");
+        assert_eq!(buffer[(0, 2)].fg, Color::Red);
+        assert_eq!(buffer[(2, 2)].fg, Color::Yellow);
+        assert!(buffer[(0, 2)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(0, 4)].fg, Color::DarkGray);
 
         app.move_down(1);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 0)].fg, Color::Red);
-        assert!(!buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 2)].fg, Color::Red);
+        assert!(!buffer[(0, 2)].modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -1700,13 +1823,13 @@ command = 'echo "$HASH"'
         let mut app = App::new(vec!["* abc123 (HEAD -> main) first".into(), "|/".into()]);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 0)].symbol(), "*");
-        assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
-        assert!(!buffer[(0, 1)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 2)].symbol(), "*");
+        assert!(buffer[(0, 2)].modifier.contains(Modifier::BOLD));
+        assert!(!buffer[(0, 3)].modifier.contains(Modifier::BOLD));
         app.move_down(1);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(!buffer[(0, 0)].modifier.contains(Modifier::BOLD));
-        assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
+        assert!(!buffer[(0, 2)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(0, 3)].modifier.contains(Modifier::BOLD));
     }
 }
