@@ -21,6 +21,14 @@ the `gitglass log` subcommand.
 
 - `j` / `k` (or arrow keys): move down / up one line
 - `Ctrl-d` / `Ctrl-u`: move down / up half the visible log area
+- `/` in the log: enter live search input (or edit the existing search)
+- `Enter` in search input: select the first match and enter search result mode
+- `Left` / `Right` in search input: move the visible text cursor
+- `Home` / `End` in search input: move to the start / end of the query
+- `Backspace` / `Delete` in search input: delete before / at the cursor
+- `Ctrl-u` in search input: clear the query
+- `n` / `N` in search results: select the next / previous occurrence, without wrapping
+- `Esc` in either search mode: clear search highlights and return to normal mode, keeping the cursor position
 - `b`: toggle the right-hand branch list (local and remote branches); focus it when opening
 - `Space` in the branch list: toggle inclusion in the log (`[x]` means included)
 - `a` in the branch list: select all branches (including hidden matches), or clear all if all are selected
@@ -29,6 +37,17 @@ the `gitglass log` subcommand.
 - `Backspace` while filtering: delete the last character
 - `Esc`: clear an active filter first; otherwise close the branch list and return to the log; quit if already in the log
 - `q` or `Ctrl-c`: quit
+
+Search is a case-sensitive literal substring search across the displayed log,
+including hashes, decorations, and subjects. All occurrences are highlighted in
+yellow; the active result is cyan. While typing, the first match is scrolled into
+view without moving the cursor. Enter selects it; `n` / `N` select subsequent
+occurrences (including multiple occurrences on one line) and scroll as needed.
+Moving the log cursor off the active result returns it to yellow; `n` / `N`
+then search strictly after / before the cursor's current line.
+The footer reports missing results and navigation boundaries. `/` from results
+retains the query; Esc cancels it. Ordinary shortcuts are text while typing
+(except Ctrl-c, which still quits).
 
 The viewport follows the selection and adapts to terminal resizing.
 The branch list is sorted by committer date, newest first. It uses the same
@@ -66,8 +85,8 @@ that shell (interactive shell aliases/functions are not automatically loaded).
 There is no built-in clipboard command or default `y` binding.
 Configured bindings appear in the log footer using their descriptions (or
 commands when no description is set).
-Bindings apply only while the log has focus, not while navigating or filtering
-branches. Commands referencing `$HASH` or `${HASH}` require a selected commit;
+Bindings apply only while the log has focus, not while entering a log search
+or navigating or filtering branches. Commands referencing `$HASH` or `${HASH}` require a selected commit;
 graph-only lines and empty logs do not provide one.
 Built-in log keys cannot be overridden, and duplicate bindings are rejected.
 

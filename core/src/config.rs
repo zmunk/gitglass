@@ -223,6 +223,9 @@ pub const LOG_BUILTINS: &[(&str, &str)] = &[
     ("ctrl-d", "half page down"),
     ("ctrl-u", "half page up"),
     ("b", "toggle branches"),
+    ("/", "search"),
+    ("n", "next search result"),
+    ("N", "previous search result"),
 ];
 
 pub fn parse_log_config(contents: &str) -> io::Result<Vec<Binding>> {
@@ -525,7 +528,9 @@ success_message = "Commit hash copied"
 
     #[test]
     fn log_bindings_reject_conflicts_and_invalid_commands() {
-        for key in ["q", "b", "j", "up", "esc", "ctrl-c"] {
+        for key in [
+            "q", "b", "j", "up", "esc", "ctrl-c", "/", "n", "N", "shift-n",
+        ] {
             let contents = format!("[[log.keybindings]]\nkey = {key:?}\ncommand = 'true'");
             assert!(parse_log_config(&contents).is_err());
         }
