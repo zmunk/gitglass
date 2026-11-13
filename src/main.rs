@@ -1,16 +1,16 @@
 use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 use anyhow::{bail, Context, Result};
-use gitglass_core::{init_terminal, prepare_signals};
+use gitglass_core::{init_inline_terminal, init_terminal, prepare_signals};
 
 const USAGE: &str = "\
 Usage: gitglass [command] [args]
 
 Commands:
-  status            Show Git status with configurable keybindings
+  status [--inline] Show Git status (optionally content-sized, in the main screen)
   diff <file>       Interactively stage/unstage content changes in a file
-  log               Interactive Git log viewer with branch filtering
-  branch            List and switch branches with configurable keybindings
+  log [--inline]    Interactive Git log viewer with branch filtering
+  branch [--inline] List and switch branches with configurable keybindings
   help              Show this help message
 
 With no command, runs the configured default_command, or shows help.
@@ -39,8 +39,9 @@ fn run() -> Result<()> {
     let command = args.remove(0);
     match command.to_str() {
         Some("status") => {
-            if !args.is_empty() {
-                bail!("gitglass status takes no arguments (got {args:?})");
+            let inline = args.len() == 1 && args[0] == "--inline";
+            if !args.is_empty() && !inline {
+                bail!("Usage: gitglass status [--inline] (got {args:?})");
             }
 
             // Load config *before* terminal init so parse errors print normally.
@@ -49,23 +50,42 @@ fn run() -> Result<()> {
 
             prepare_signals().context("Cannot prepare signal handlers")?;
 
-            let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
+            let (mut terminal, _guard) = if inline {
+                init_inline_terminal(1)
+            } else {
+                init_terminal()
+            }
+            .context("Cannot initialise terminal")?;
 
-            gitglass_status::run(&mut terminal, &bindings)
-                .context("Status TUI exited with an error")?;
+            let run = if inline {
+                gitglass_status::run_inline
+            } else {
+                gitglass_status::run
+            };
+            run(&mut terminal, &bindings).context("Status TUI exited with an error")?;
 
             Ok(())
         }
         Some("branch") => {
-            if !args.is_empty() {
-                bail!("gitglass branch takes no arguments (got {args:?})");
+            let inline = args.len() == 1 && args[0] == "--inline";
+            if !args.is_empty() && !inline {
+                bail!("Usage: gitglass branch [--inline] (got {args:?})");
             }
             let bindings = gitglass_core::config::load_branch_bindings()
                 .context("Cannot load gitglass configuration")?;
             prepare_signals().context("Cannot prepare signal handlers")?;
-            let (mut terminal, _guard) = init_terminal().context("Cannot initialise terminal")?;
-            gitglass_branch::run(&mut terminal, &bindings)
-                .context("Branch TUI exited with an error")?;
+            let (mut terminal, _guard) = if inline {
+                init_inline_terminal(1)
+            } else {
+                init_terminal()
+            }
+            .context("Cannot initialise terminal")?;
+            let run = if inline {
+                gitglass_branch::run_inline
+            } else {
+                gitglass_branch::run
+            };
+            run(&mut terminal, &bindings).context("Branch TUI exited with an error")?;
             Ok(())
         }
         Some("diff") => {
@@ -104,12 +124,17 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("log") => {
-            if !args.is_empty() {
-                bail!("gitglass log takes no arguments (got {args:?})");
+            let inline = args.len() == 1 && args[0] == "--inline";
+            if !args.is_empty() && !inline {
+                bail!("Usage: gitglass log [--inline] (got {args:?})");
             }
 
-            gitglass_log::run()
-                .map_err(|e| anyhow::anyhow!("Log TUI exited with an error: {e:#}"))?;
+            let run = if inline {
+                gitglass_log::run_inline
+            } else {
+                gitglass_log::run
+            };
+            run().map_err(|e| anyhow::anyhow!("Log TUI exited with an error: {e:#}"))?;
 
             Ok(())
         }

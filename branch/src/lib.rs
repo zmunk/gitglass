@@ -180,10 +180,55 @@ fn compact_hints(
         .join(" • ")
 }
 
+fn help_rows(expanded: bool, bindings: &[Binding]) -> usize {
+    if expanded {
+        1usize
+            .saturating_add(config::BRANCH_BUILTINS.len())
+            .saturating_add(bindings.len())
+    } else {
+        1
+    }
+}
+
+fn content_height(
+    count: usize,
+    expanded: bool,
+    bindings: &[Binding],
+    message: bool,
+    rows: u16,
+) -> u16 {
+    count
+        .max(1)
+        .saturating_add(help_rows(expanded, bindings))
+        .saturating_add(usize::from(message))
+        .min(usize::from(rows.max(1))) as u16
+}
+
 /// Run on an already-initialised terminal.
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
     bindings: &[Binding],
+) -> io::Result<()> {
+    run_mode(terminal, bindings, false)
+}
+
+/// Run a content-sized branch panel in the main screen buffer.
+pub fn run_inline(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    bindings: &[Binding],
+) -> io::Result<()> {
+    let result = run_mode(terminal, bindings, true);
+    if result.is_err() {
+        let height = terminal.get_frame().area().height;
+        let _ = gitglass_core::finish_inline_terminal(terminal, height);
+    }
+    result
+}
+
+fn run_mode(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    bindings: &[Binding],
+    inline: bool,
 ) -> io::Result<()> {
     let cwd = std::env::current_dir()?;
     let mut branches = load_branches(&cwd)?;
@@ -192,7 +237,27 @@ pub fn run(
     let mut message: Option<String> = None;
     let mut expanded = false;
     let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
+    let mut previous_size = None;
+    let mut after_command = false;
     loop {
+        if inline {
+            let size = crossterm::terminal::size()?;
+            let height = content_height(
+                branches.len(),
+                expanded,
+                bindings,
+                message.is_some(),
+                size.1,
+            );
+            if after_command
+                || previous_size != Some(size)
+                || terminal.get_frame().area().height != height
+            {
+                gitglass_core::resize_inline_terminal(terminal, height, after_command)?;
+                previous_size = Some(size);
+                after_command = false;
+            }
+        }
         let mut height = 0;
         terminal.draw(|frame| {
             let mut help = if expanded {
@@ -208,12 +273,18 @@ pub fn run(
             } else {
                 "q quit • j/k move".to_owned()
             };
-            let help_height =
-                (help.lines().count() as u16).min(frame.area().height.saturating_sub(2));
+            let reserved = if inline {
+                1 + u16::from(message.is_some())
+            } else {
+                2
+            };
+            let help_height = help_rows(expanded, bindings)
+                .min(usize::from(frame.area().height.saturating_sub(reserved)))
+                as u16;
             let [body, help_area, footer] = Layout::vertical([
                 Constraint::Min(0),
                 Constraint::Length(help_height),
-                Constraint::Length(if message.is_some() { 2 } else { 1 }),
+                Constraint::Length(u16::from(!inline) + u16::from(message.is_some())),
             ])
             .areas(frame.area());
             height = body.height;
@@ -254,10 +325,13 @@ pub fn run(
                 Paragraph::new(help).style(Style::default().fg(Color::DarkGray)),
                 help_area,
             );
-            let mut footer_lines = vec![Line::styled(
-                format!("{} • branches", cwd.display()),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
-            )];
+            let mut footer_lines = Vec::new();
+            if !inline {
+                footer_lines.push(Line::styled(
+                    format!("{} • branches", cwd.display()),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+                ));
+            }
             if let Some(message) = &message {
                 footer_lines.push(Line::styled(
                     safe_text(message),
@@ -285,7 +359,12 @@ pub fn run(
                     }
                     match normalized {
                         (KeyCode::Char('q') | KeyCode::Esc, KeyModifiers::NONE)
-                        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(()),
+                        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            if inline {
+                                gitglass_core::finish_inline_terminal(terminal, height)?;
+                            }
+                            return Ok(());
+                        }
                         (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
                             navigate(&mut selection, branches.len(), true, 1)
                         }
@@ -318,12 +397,17 @@ pub fn run(
                         _ if key.kind == KeyEventKind::Press => {
                             if let Some(binding) = bindings.iter().find(|b| b.key == normalized) {
                                 let branch = selection.selected().and_then(|i| branches.get(i));
-                                message = actions::execute_branch(
-                                    terminal,
-                                    binding,
-                                    branch.map(Branch::name),
-                                    &cwd,
-                                )?;
+                                let execute = if inline {
+                                    actions::execute_branch_inline
+                                } else {
+                                    actions::execute_branch
+                                };
+                                message =
+                                    execute(terminal, binding, branch.map(Branch::name), &cwd)?;
+                                after_command = inline
+                                    && binding.suspend
+                                    && (branch.is_some()
+                                        || !config::requires_variable(&binding.command, "BRANCH"));
                                 next_refresh = Instant::now();
                             }
                         }

@@ -7,6 +7,21 @@ use std::{
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn inline_height_tracks_branches_help_messages_and_terminal_size() {
+    assert_eq!(content_height(2, false, &[], false, 30), 3);
+    assert_eq!(content_height(2, false, &[], true, 30), 4);
+    assert_eq!(content_height(0, false, &[], false, 30), 2);
+    assert_eq!(
+        content_height(2, true, &[], false, 30),
+        (3 + config::BRANCH_BUILTINS.len()) as u16
+    );
+    assert_eq!(content_height(100, false, &[], false, 30), 30);
+    assert_eq!(content_height(2, true, &[], false, 5), 5);
+    assert_eq!(content_height(2, false, &[], false, 30), 3);
+    assert_eq!(content_height(2, false, &[], false, 1), 1);
+}
+
 struct Repo(PathBuf);
 
 impl Repo {

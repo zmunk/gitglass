@@ -17,6 +17,11 @@ repository. Alternatively, install with `cargo install --path .`, then run
 `gitglass-log` inside any Git repository.  This crate is also integrated as
 the `gitglass log` subcommand.
 
+Use `gitglass log --inline` (or `gg log --inline` if `gg` is your alias) for a
+content-sized panel in the main screen buffer. Its height follows the log and
+open branch pane, capped at the terminal height. It omits the repository footer
+and top padding, preserves scrollback, and clears the hint line on quit.
+
 ## Keys
 
 - `j` / `k` (or arrow keys): move down / up one line

@@ -18,11 +18,12 @@ use gitglass_core::{
     config::{self, Binding},
 };
 use ratatui::{
+    backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    DefaultTerminal, Frame,
+    Frame, Terminal,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -171,6 +172,7 @@ struct App {
     action_message: Option<String>,
     log_hints: String,
     repository_name: Option<String>,
+    inline: bool,
     search: Search,
 }
 
@@ -187,6 +189,7 @@ impl App {
             action_message: None,
             log_hints: "j/k: move  Ctrl-d/u: half page  /: search  b: branches  q: quit".into(),
             repository_name: None,
+            inline: false,
             search: Search::default(),
         }
     }
@@ -244,8 +247,25 @@ impl App {
     }
 
     fn top_padding(&self) -> usize {
-        // Keep at least one log row usable in tiny terminals.
-        self.page_height.saturating_sub(1).min(2)
+        // Keep inline output compact and at least one log row usable otherwise.
+        if self.inline {
+            0
+        } else {
+            self.page_height.saturating_sub(1).min(2)
+        }
+    }
+
+    fn content_height(&self, rows: u16) -> u16 {
+        let branches = self
+            .branches
+            .as_ref()
+            .map_or(0, |pane| pane.visible.len().max(1).saturating_add(2));
+        self.lines
+            .len()
+            .max(1)
+            .max(branches)
+            .saturating_add(1)
+            .min(usize::from(rows.max(1))) as u16
     }
 
     fn move_down(&mut self, count: usize) {
@@ -751,11 +771,29 @@ impl App {
         }
     }
 
-    fn run(&mut self, terminal: &mut DefaultTerminal, bindings: &[Binding]) -> io::Result<()> {
+    fn run(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+        bindings: &[Binding],
+    ) -> io::Result<()> {
         self.include_binding_hints(bindings);
         let cwd = std::env::current_dir()?;
         let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
+        let mut previous_size = None;
+        let mut after_command = false;
         loop {
+            if self.inline {
+                let size = crossterm::terminal::size()?;
+                let height = self.content_height(size.1);
+                if after_command
+                    || previous_size != Some(size)
+                    || terminal.get_frame().area().height != height
+                {
+                    gitglass_core::resize_inline_terminal(terminal, height, after_command)?;
+                    previous_size = Some(size);
+                    after_command = false;
+                }
+            }
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(next_refresh.saturating_duration_since(Instant::now()))? {
                 if let Event::Key(key) = event::read()? {
@@ -770,12 +808,20 @@ impl App {
                             let hash = self.lines.get(self.selected).and_then(commit_hash);
                             match hash.as_deref().map(resolve_commit_hash).transpose() {
                                 Ok(hash) => {
-                                    self.action_message = actions::execute_hash(
-                                        terminal,
-                                        binding,
-                                        hash.as_deref(),
-                                        &cwd,
-                                    )?;
+                                    let execute = if self.inline {
+                                        actions::execute_hash_inline
+                                    } else {
+                                        actions::execute_hash
+                                    };
+                                    self.action_message =
+                                        execute(terminal, binding, hash.as_deref(), &cwd)?;
+                                    after_command = self.inline
+                                        && binding.suspend
+                                        && (hash.is_some()
+                                            || !config::requires_variable(
+                                                &binding.command,
+                                                "HASH",
+                                            ));
                                 }
                                 Err(error) => self.action_message = Some(error.to_string()),
                             }
@@ -783,6 +829,12 @@ impl App {
                         }
                     }
                     if !handled && self.handle_key(key) {
+                        if self.inline {
+                            gitglass_core::finish_inline_terminal(
+                                terminal,
+                                self.page_height as u16,
+                            )?;
+                        }
                         return Ok(());
                     }
                 }
@@ -1018,15 +1070,25 @@ fn display_directory(path: &std::path::Path, home: Option<&std::path::Path>) -> 
 /// Fetches Git data before entering raw mode, so Git errors leave the
 /// terminal untouched.  Manages its own terminal lifecycle.
 pub fn run() -> Result<(), Box<dyn Error>> {
+    run_mode(false)
+}
+
+/// Run a content-sized log panel in the main screen buffer.
+pub fn run_inline() -> Result<(), Box<dyn Error>> {
+    run_mode(true)
+}
+
+fn run_mode(inline: bool) -> Result<(), Box<dyn Error>> {
     let bindings = config::load_log_bindings()?;
     gitglass_core::prepare_signals()?;
     let included_branches = initial_branches()?;
     let mut app = App::new(load_log(&included_branches)?);
     app.included_branches = included_branches;
+    app.inline = inline;
     let root = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()?;
-    if root.status.success() {
+    if root.status.success() && !inline {
         let root = String::from_utf8_lossy(&root.stdout);
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         app.repository_name = Some(display_directory(
@@ -1034,9 +1096,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             home.as_deref(),
         ));
     }
-    let mut terminal = ratatui::init();
+    let (mut terminal, _guard) = if inline {
+        gitglass_core::init_inline_terminal(1)?
+    } else {
+        gitglass_core::init_terminal()?
+    };
     let result = app.run(&mut terminal, &bindings);
-    ratatui::restore();
+    if inline && result.is_err() {
+        let height = terminal.get_frame().area().height;
+        let _ = gitglass_core::finish_inline_terminal(&mut terminal, height);
+    }
     result?;
     Ok(())
 }
@@ -1044,6 +1113,43 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_height_tracks_log_branch_pane_and_terminal_size() {
+        let mut app = App::new(vec![Line::raw("first"), Line::raw("second")]);
+        app.inline = true;
+        assert_eq!(app.content_height(30), 3);
+        app.branches = Some(BranchPane::new(Ok(vec!["* main".into(), "  topic".into()])));
+        assert_eq!(app.content_height(30), 5);
+        app.branches.as_mut().unwrap().filter = "main".into();
+        app.branches.as_mut().unwrap().update_filter();
+        assert_eq!(app.content_height(30), 4);
+        app.branches = None;
+        assert_eq!(app.content_height(30), 3);
+        app.lines = vec![Line::raw("row"); 100];
+        assert_eq!(app.content_height(30), 30);
+        app.lines.clear();
+        assert_eq!(app.content_height(30), 2);
+        assert_eq!(app.content_height(1), 1);
+    }
+
+    #[test]
+    fn inline_log_has_no_top_padding_or_repository_footer() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = App::new(vec![Line::raw("first"), Line::raw("second")]);
+        app.inline = true;
+        let mut terminal = Terminal::new(TestBackend::new(80, app.content_height(30))).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        for (row, expected) in [(0, "first"), (1, "second"), (2, "j/k: move")] {
+            for (column, character) in expected.chars().enumerate() {
+                assert_eq!(buffer[(column as u16, row)].symbol(), character.to_string());
+            }
+        }
+        assert_eq!(app.page_height, 2);
+        assert_eq!(app.top_padding(), 0);
+    }
 
     #[test]
     fn relative_labels_follow_first_parents_and_include_merge_parents() {

@@ -122,6 +122,22 @@ pub fn execute(
     execute_command(terminal, binding, command(binding, file, cwd))
 }
 
+/// Execute a status action without switching the parent's screen buffer.
+pub fn execute_inline(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    binding: &Binding,
+    file: Option<&Path>,
+    cwd: &Path,
+) -> io::Result<Option<String>> {
+    if binding.requires_file && file.is_none() {
+        return Ok(Some(format!(
+            "{}: This action requires a focused file",
+            binding.label
+        )));
+    }
+    execute_command_mode(terminal, binding, command(binding, file, cwd), true)
+}
+
 /// Execute a log action, exporting the selected commit as shell data.
 pub fn execute_hash<W: Write>(
     terminal: &mut Terminal<CrosstermBackend<W>>,
@@ -136,6 +152,22 @@ pub fn execute_hash<W: Write>(
         )));
     }
     execute_command(terminal, binding, hash_command(binding, hash, cwd))
+}
+
+/// Execute a log action from an inline panel.
+pub fn execute_hash_inline<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    binding: &Binding,
+    hash: Option<&str>,
+    cwd: &Path,
+) -> io::Result<Option<String>> {
+    if hash.is_none() && crate::config::requires_variable(&binding.command, "HASH") {
+        return Ok(Some(format!(
+            "{}: This action requires a focused commit",
+            binding.label
+        )));
+    }
+    execute_command_mode(terminal, binding, hash_command(binding, hash, cwd), true)
 }
 
 /// Execute a branch action, exporting the selected branch name as shell data.
@@ -154,15 +186,61 @@ pub fn execute_branch<W: Write>(
     execute_command(terminal, binding, branch_command(binding, branch, cwd))
 }
 
+/// Execute a branch action from an inline panel.
+pub fn execute_branch_inline<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    binding: &Binding,
+    branch: Option<&str>,
+    cwd: &Path,
+) -> io::Result<Option<String>> {
+    if branch.is_none() && crate::config::requires_variable(&binding.command, "BRANCH") {
+        return Ok(Some(format!(
+            "{}: This action requires a focused branch",
+            binding.label
+        )));
+    }
+    execute_command_mode(
+        terminal,
+        binding,
+        branch_command(binding, branch, cwd),
+        true,
+    )
+}
+
 fn execute_command<W: Write>(
     terminal: &mut Terminal<CrosstermBackend<W>>,
     binding: &Binding,
     command: Command,
 ) -> io::Result<Option<String>> {
+    execute_command_mode(terminal, binding, command, false)
+}
+
+fn execute_command_mode<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    binding: &Binding,
+    command: Command,
+    inline: bool,
+) -> io::Result<Option<String>> {
     if binding.suspend {
-        suspend_terminal(terminal, binding.leave_alternate_screen)?;
+        if inline {
+            let area = terminal.get_frame().area();
+            // Remove the old panel before yielding the main screen to the child.
+            // The replacement panel will start after any output the child leaves.
+            terminal.clear()?;
+            terminal.set_cursor_position((area.x, area.y))?;
+        }
+        suspend_terminal(terminal, !inline && binding.leave_alternate_screen)?;
         let result = run_command(command);
-        restore_terminal(terminal)?;
+        if inline {
+            crossterm::terminal::enable_raw_mode()?;
+            // TUIs restore the cursor to the panel's start. Only advance when
+            // line-mode output left an unfinished line, not after every child.
+            if crossterm::cursor::position()?.0 != 0 {
+                crossterm::execute!(terminal.backend_mut(), crossterm::style::Print("\r\n"))?;
+            }
+        } else {
+            restore_terminal(terminal)?;
+        }
         Ok(match result {
             Ok((status, stderr)) => result_message(binding, status, &stderr),
             Err(error) => Some(format!(

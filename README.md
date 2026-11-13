@@ -7,7 +7,10 @@ binary.
 
 ```bash
 gitglass status              # Interactive git status with configurable keybindings
+gitglass status --inline     # Content-sized status panel, preserving scrollback
 gitglass branch              # List and switch branches
+gitglass branch --inline     # Content-sized branch panel
+gitglass log --inline        # Content-sized log panel
 gitglass diff <file>         # Stage/unstage content changes line-by-line or by hunk
 ```
 
@@ -39,6 +42,11 @@ shows help. Explicit subcommands and `--help` / `-h` always take precedence.
 Displays `git status -s` output with Git's configured colours.  Navigate with
 `j`/`k`, scroll with `Ctrl-D`/`Ctrl-U`, and press `?` to toggle the keybinding
 help.
+
+Use `gitglass status --inline` to stay in the main terminal buffer instead of
+opening a fullscreen alternate screen. The panel grows and shrinks with the
+status rows, help, and feedback messages, up to the full terminal height. Longer
+lists scroll normally.
 
 Configure custom keybindings in `$XDG_CONFIG_HOME/gitglass/config.toml`
 (falling back to `~/.config/gitglass/config.toml`):
@@ -77,9 +85,16 @@ success_message = "Commit hash copied"
 ```
 
 The `copy` command must be available to `sh -c`. See [log documentation](log/README.md)
-for selection behavior and command options.
+for selection behavior and command options. Use `gitglass log --inline` for a
+content-sized main-screen panel, with no repository footer or top padding. It
+resizes with log entries and the branch pane, up to full terminal height, and
+clears hints on quit.
 
 ### `gitglass branch`
+
+Use `gitglass branch --inline` for a dynamically sized panel, up to full terminal
+height. Inline mode omits the path footer and clears hints/help on quit, leaving
+the branch list in scrollback.
 
 Lists local branches first, followed by grey remote branches. Each group uses
 the log branch menu's most-recent-commit-first order. The current branch is

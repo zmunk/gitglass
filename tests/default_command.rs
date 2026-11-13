@@ -55,6 +55,22 @@ fn explicit_help_bypasses_default_and_config_errors() {
 }
 
 #[test]
+fn viewers_reject_unknown_or_duplicate_inline_options() {
+    for command in ["status", "branch", "log"] {
+        for args in [
+            vec![command, "--unknown"],
+            vec![command, "--inline", "--inline"],
+            vec![command, "--inline", "extra"],
+        ] {
+            let output = invoke(None, &args);
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains(&format!("Usage: gitglass {command} [--inline]")));
+        }
+    }
+}
+
+#[test]
 fn explicit_command_takes_precedence() {
     let output = invoke(Some("default_command = 'status'"), &["diff"]);
     assert!(!output.status.success());

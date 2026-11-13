@@ -116,14 +116,13 @@ fn render(
     frame: &mut ratatui::Frame,
     status: &Text<'static>,
     selection: &mut ListState,
-    cwd: &str,
-    branch: &str,
+    identity: Option<(&str, &str)>,
     message: Option<&str>,
     help: &mut help::Help,
 ) -> u16 {
     let [body, footer] = Layout::vertical([
         Constraint::Min(0),
-        Constraint::Length(if message.is_some() { 2 } else { 1 }),
+        Constraint::Length(u16::from(identity.is_some()) + u16::from(message.is_some())),
     ])
     .areas(frame.area());
     let [body, help_area] = Layout::vertical([
@@ -133,10 +132,13 @@ fn render(
     .areas(body);
     frame.render_stateful_widget(status_list(status), body, selection);
     help.render(frame, help_area);
-    let mut footer_lines = vec![Line::styled(
-        format!("{cwd} • {branch}"),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
-    )];
+    let mut footer_lines = Vec::new();
+    if let Some((cwd, branch)) = identity {
+        footer_lines.push(Line::styled(
+            format!("{cwd} • {branch}"),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+        ));
+    }
     if let Some(message) = message {
         let message: String = message
             .chars()
@@ -196,6 +198,40 @@ pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
     bindings: &[Binding],
 ) -> io::Result<()> {
+    run_mode(terminal, bindings, false)
+}
+
+/// Run status in the main screen, resizing to its contents on every update.
+pub fn run_inline(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    bindings: &[Binding],
+) -> io::Result<()> {
+    let result = run_mode(terminal, bindings, true);
+    if result.is_ok() {
+        return result;
+    }
+    let area = terminal.get_frame().area();
+    let cleanup = terminal
+        .set_cursor_position((0, area.bottom().saturating_sub(1)))
+        .and_then(|_| crossterm::execute!(terminal.backend_mut(), crossterm::style::Print("\r\n")));
+    result.and(cleanup)
+}
+
+fn content_height(status: &Text<'_>, help: &help::Help, message: bool, rows: u16) -> u16 {
+    status
+        .lines
+        .len()
+        .max(1)
+        .saturating_add(usize::from(help.height(u16::MAX)))
+        .saturating_add(usize::from(message))
+        .min(usize::from(rows.max(1))) as u16
+}
+
+fn run_mode(
+    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    bindings: &[Binding],
+    inline: bool,
+) -> io::Result<()> {
     let cwd_path = std::env::current_dir()?;
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let cwd = display_directory(&cwd_path, home.as_deref());
@@ -206,16 +242,29 @@ pub fn run(
     let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
     let mut message: Option<String> = None;
     let mut help = help::Help::new(bindings);
+    let mut after_command = false;
+    let mut previous_size = None;
 
     loop {
+        if inline {
+            let size = crossterm::terminal::size()?;
+            let height = content_height(&status.text, &help, message.is_some(), size.1);
+            if after_command
+                || previous_size != Some(size)
+                || terminal.get_frame().area().height != height
+            {
+                gitglass_core::resize_inline_terminal(terminal, height, after_command)?;
+                after_command = false;
+                previous_size = Some(size);
+            }
+        }
         let mut list_height = 0;
         terminal.draw(|frame| {
             list_height = render(
                 frame,
                 &status.text,
                 &mut selection,
-                &cwd,
-                &branch,
+                if inline { None } else { Some((&cwd, &branch)) },
                 message.as_deref(),
                 &mut help,
             );
@@ -229,7 +278,12 @@ pub fn run(
                         message = None;
                     }
                     match normalized {
-                        (KeyCode::Char('q'), KeyModifiers::NONE) => return Ok(()),
+                        (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                            if inline {
+                                gitglass_core::finish_inline_terminal(terminal, list_height)?;
+                            }
+                            return Ok(());
+                        }
                         (KeyCode::Char('j'), KeyModifiers::NONE) => {
                             move_selection(&mut selection, status.paths.len(), true);
                         }
@@ -256,12 +310,20 @@ pub fn run(
                                 let file = selection
                                     .selected()
                                     .and_then(|index| status.paths.get(index));
-                                message = actions::execute(
+                                let execute = if inline {
+                                    actions::execute_inline
+                                } else {
+                                    actions::execute
+                                };
+                                message = execute(
                                     terminal,
                                     binding,
                                     file.map(|p| p.as_path()),
                                     &cwd_path,
                                 )?;
+                                after_command = inline
+                                    && binding.suspend
+                                    && (!binding.requires_file || file.is_some());
                                 next_refresh = Instant::now();
                             }
                         }
@@ -283,6 +345,23 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_height_tracks_contents_help_messages_and_terminal_size() {
+        let mut help = help::Help::new(&[]);
+        let short = Text::raw("first\nsecond");
+        assert_eq!(content_height(&short, &help, false, 30), 3);
+        assert_eq!(content_height(&short, &help, true, 30), 4);
+        help.toggle();
+        assert_eq!(content_height(&short, &help, false, 30), 6);
+        assert_eq!(content_height(&short, &help, false, 5), 5);
+        help.toggle();
+        let long = Text::raw("row\n".repeat(100));
+        assert_eq!(content_height(&long, &help, false, 30), 30);
+        assert_eq!(content_height(&short, &help, false, 30), 3);
+        assert_eq!(content_height(&Text::default(), &help, false, 30), 2);
+        assert_eq!(content_height(&short, &help, false, 1), 1);
+    }
 
     #[test]
     fn selection_moves_and_stops_at_boundaries() {
@@ -354,6 +433,40 @@ mod tests {
     }
 
     #[test]
+    fn inline_omits_identity_without_leaving_a_blank_row() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let status = Text::raw("first\nsecond");
+        for message in [None, Some("Action failed")] {
+            let mut help = help::Help::new(&[]);
+            let height = content_height(&status, &help, message.is_some(), 30);
+            let mut terminal = Terminal::new(TestBackend::new(30, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(
+                        frame,
+                        &status,
+                        &mut ListState::default(),
+                        None,
+                        message,
+                        &mut help,
+                    );
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            for (row, expected) in [(0, "first"), (1, "second"), (2, "? Show keybindings")]
+                .into_iter()
+                .chain(message.map(|message| (3, message)))
+            {
+                for (column, character) in expected.chars().enumerate() {
+                    assert_eq!(buffer[(column as u16, row)].symbol(), character.to_string());
+                }
+            }
+            assert_eq!(height, if message.is_some() { 4 } else { 3 });
+        }
+    }
+
+    #[test]
     fn footer_is_pinned_below_scrolling_status() {
         use ratatui::{backend::TestBackend, Terminal};
 
@@ -366,8 +479,7 @@ mod tests {
                     frame,
                     &status,
                     &mut selection,
-                    "/work/project",
-                    "main",
+                    Some(("/work/project", "main")),
                     None,
                     &mut help::Help::new(&[]),
                 );
@@ -403,8 +515,7 @@ mod tests {
                     frame,
                     &status,
                     &mut selection,
-                    "/work",
-                    "main",
+                    Some(("/work", "main")),
                     None,
                     &mut help,
                 );
@@ -437,8 +548,7 @@ mod tests {
                     frame,
                     &status,
                     &mut selection,
-                    "/work",
-                    "main",
+                    Some(("/work", "main")),
                     Some("e (Edit): command failed\nnext"),
                     &mut help::Help::new(&[]),
                 );
