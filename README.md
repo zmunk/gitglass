@@ -35,6 +35,36 @@ default_command = "status"
 Supported defaults are `status`, `log`, and `branch`. Without this setting, `gitglass`
 shows help. Explicit subcommands and `--help` / `-h` always take precedence.
 
+### Default inline mode and height
+
+Set inline defaults independently for each viewer:
+
+```toml
+default_command = "status"
+
+[status]
+inline = true
+inline_max_height = 20
+
+[log]
+inline = true
+inline_max_height = 30
+
+[branch]
+inline = true
+inline_max_height = 15
+```
+
+`inline` defaults to `false`. `--inline` and `--fullscreen` override the viewer's
+configured mode (for example, `gitglass status --fullscreen`). With a configured
+`default_command`, `gitglass --fullscreen` and `gitglass --inline` apply to that
+command. `default_command` remains a command name without flags.
+
+`inline_max_height` is an optional positive integer (1–65535) limiting the entire
+inline panel, including hints and messages, in terminal rows. The panel still
+fits its contents and never exceeds the terminal height. Omit the setting to
+allow the full terminal height; fullscreen mode ignores the cap.
+
 ## Subcommands
 
 ### `gitglass status`
@@ -86,9 +116,9 @@ success_message = "Commit hash copied"
 
 The `copy` command must be available to `sh -c`. See [log documentation](log/README.md)
 for selection behavior and command options. Use `gitglass log --inline` for a
-content-sized main-screen panel, with no repository footer or top padding. It
-resizes with log entries and the branch pane, up to full terminal height, and
-clears hints on quit.
+content-sized main-screen panel with no top padding. It resizes with log entries
+and the branch pane, up to full terminal height, and clears hints on quit. The
+repository footer appears only when the panel reaches the terminal's full height.
 
 ### `gitglass branch`
 

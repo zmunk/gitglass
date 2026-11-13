@@ -239,16 +239,17 @@ fn run_mode(
     let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
     let mut previous_size = None;
     let mut after_command = false;
+    let max_height = if inline {
+        config::load_inline_max_height(config::DefaultCommand::Branch)?
+    } else {
+        None
+    };
     loop {
         if inline {
             let size = crossterm::terminal::size()?;
-            let height = content_height(
-                branches.len(),
-                expanded,
-                bindings,
-                message.is_some(),
-                size.1,
-            );
+            let rows = max_height.map_or(size.1, |cap| cap.min(size.1));
+            let height =
+                content_height(branches.len(), expanded, bindings, message.is_some(), rows);
             if after_command
                 || previous_size != Some(size)
                 || terminal.get_frame().area().height != height

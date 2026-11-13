@@ -61,12 +61,36 @@ fn viewers_reject_unknown_or_duplicate_inline_options() {
             vec![command, "--unknown"],
             vec![command, "--inline", "--inline"],
             vec![command, "--inline", "extra"],
+            vec![command, "--inline", "--fullscreen"],
+            vec![command, "--fullscreen", "--fullscreen"],
         ] {
             let output = invoke(None, &args);
             assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr)
-                .contains(&format!("Usage: gitglass {command} [--inline]")));
+            assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(
+                "Usage: gitglass {command} [--inline | --fullscreen]"
+            )));
         }
+    }
+}
+
+#[test]
+fn bare_mode_flags_apply_to_the_configured_default() {
+    for command in ["status", "log", "branch"] {
+        let config = format!("default_command = '{command}'");
+        let output = invoke(Some(&config), &["--fullscreen", "--inline"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(
+            "Usage: gitglass {command} [--inline | --fullscreen]"
+        )));
+    }
+}
+
+#[test]
+fn bare_mode_flags_without_a_default_explain_how_to_proceed() {
+    for flag in ["--inline", "--fullscreen"] {
+        let output = invoke(None, &[flag]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("No default_command configured"));
     }
 }
 

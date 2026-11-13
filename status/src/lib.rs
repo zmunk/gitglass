@@ -244,11 +244,19 @@ fn run_mode(
     let mut help = help::Help::new(bindings);
     let mut after_command = false;
     let mut previous_size = None;
+    let max_height = if inline {
+        gitglass_core::config::load_inline_max_height(
+            gitglass_core::config::DefaultCommand::Status,
+        )?
+    } else {
+        None
+    };
 
     loop {
         if inline {
             let size = crossterm::terminal::size()?;
-            let height = content_height(&status.text, &help, message.is_some(), size.1);
+            let rows = max_height.map_or(size.1, |cap| cap.min(size.1));
+            let height = content_height(&status.text, &help, message.is_some(), rows);
             if after_command
                 || previous_size != Some(size)
                 || terminal.get_frame().area().height != height

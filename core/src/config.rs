@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, io, path::PathBuf};
+use std::{collections::HashMap, fs, io, num::NonZeroU16, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Color;
@@ -37,6 +37,10 @@ struct RawBinding {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KeybindingsSection {
+    #[serde(default)]
+    inline: bool,
+    #[serde(default)]
+    inline_max_height: Option<NonZeroU16>,
     #[serde(default)]
     keybindings: Vec<RawBinding>,
 }
@@ -379,6 +383,47 @@ pub fn load_diff_config() -> io::Result<DiffConfig> {
         .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
 }
 
+/// Parse the default presentation mode for a viewer.
+pub fn parse_inline_default(contents: &str, command: DefaultCommand) -> io::Result<bool> {
+    let config: Config = toml::from_str(contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(match command {
+        DefaultCommand::Status => config.status.inline,
+        DefaultCommand::Log => config.log.inline,
+        DefaultCommand::Branch => config.branch.inline,
+    })
+}
+
+/// Load a viewer's inline default; absent settings retain fullscreen mode.
+pub fn load_inline_default(command: DefaultCommand) -> io::Result<bool> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(false);
+    };
+    parse_inline_default(&contents, command)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
+/// Parse a viewer's optional maximum inline height, in terminal rows.
+pub fn parse_inline_max_height(contents: &str, command: DefaultCommand) -> io::Result<Option<u16>> {
+    let config: Config = toml::from_str(contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(match command {
+        DefaultCommand::Status => config.status.inline_max_height,
+        DefaultCommand::Log => config.log.inline_max_height,
+        DefaultCommand::Branch => config.branch.inline_max_height,
+    }
+    .map(NonZeroU16::get))
+}
+
+/// Load the inline height cap; absent settings use the terminal's full height.
+pub fn load_inline_max_height(command: DefaultCommand) -> io::Result<Option<u16>> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(None);
+    };
+    parse_inline_max_height(&contents, command)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
 /// Load the command to run when invoked without arguments.
 pub fn load_default_command() -> io::Result<Option<DefaultCommand>> {
     let Some((path, contents)) = load_contents()? else {
@@ -538,6 +583,41 @@ success_message = "Commit hash copied"
         assert!(parse_log_config("[[log.keybindings]]\nkey = 'y'\ncommand = 'true'\n[[log.keybindings]]\nkey = 'y'\ncommand = 'true'").is_err());
         assert!(requires_variable("copy \"${HASH}\"", "HASH"));
         assert!(!requires_variable("copy \"$HASH_SUFFIX\"", "HASH"));
+    }
+
+    #[test]
+    fn inline_defaults_and_height_caps_are_per_viewer() {
+        let viewers = [
+            DefaultCommand::Status,
+            DefaultCommand::Log,
+            DefaultCommand::Branch,
+        ];
+        for viewer in viewers {
+            assert!(!parse_inline_default("", viewer).unwrap());
+            assert_eq!(parse_inline_max_height("", viewer).unwrap(), None);
+            let contents = format!(
+                "[{}]\ninline = true\ninline_max_height = 12",
+                viewer.as_str()
+            );
+            for other in viewers {
+                assert_eq!(
+                    parse_inline_default(&contents, other).unwrap(),
+                    viewer == other
+                );
+                assert_eq!(
+                    parse_inline_max_height(&contents, other).unwrap(),
+                    (viewer == other).then_some(12)
+                );
+            }
+            let contents = format!("[{}]\ninline = false", viewer.as_str());
+            assert!(!parse_inline_default(&contents, viewer).unwrap());
+            for invalid in ["0", "-1", "65536", "1.5", "'12'", "true"] {
+                let contents = format!("[{}]\ninline_max_height = {invalid}", viewer.as_str());
+                assert!(parse_inline_max_height(&contents, viewer).is_err());
+            }
+            let contents = format!("[{}]\ninline = 'true'", viewer.as_str());
+            assert!(parse_inline_default(&contents, viewer).is_err());
+        }
     }
 
     #[test]

@@ -19,8 +19,13 @@ the `gitglass log` subcommand.
 
 Use `gitglass log --inline` (or `gg log --inline` if `gg` is your alias) for a
 content-sized panel in the main screen buffer. Its height follows the log and
-open branch pane, capped at the terminal height. It omits the repository footer
-and top padding, preserves scrollback, and clears the hint line on quit.
+open branch pane, capped at the terminal height. It omits top padding, preserves
+scrollback, and clears the hint line on quit. The repository footer is shown only
+when the panel reaches the terminal's full height, not when a smaller height cap
+is reached.
+Set `[log] inline = true` in the global config to make this the default, and
+optionally set `inline_max_height = 20` in that section to cap its total height
+in rows. `gitglass log --fullscreen` overrides the configured mode.
 
 ## Keys
 

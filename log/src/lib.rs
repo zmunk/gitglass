@@ -173,6 +173,7 @@ struct App {
     log_hints: String,
     repository_name: Option<String>,
     inline: bool,
+    inline_full_height: bool,
     search: Search,
 }
 
@@ -190,6 +191,7 @@ impl App {
             log_hints: "j/k: move  Ctrl-d/u: half page  /: search  b: branches  q: quit".into(),
             repository_name: None,
             inline: false,
+            inline_full_height: false,
             search: Search::default(),
         }
     }
@@ -583,15 +585,19 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
+        let repository_name = self
+            .repository_name
+            .as_deref()
+            .filter(|_| !self.inline || self.inline_full_height);
         let [body, footer, repository] = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(1),
-            Constraint::Length(u16::from(self.repository_name.is_some())),
+            Constraint::Length(u16::from(repository_name.is_some())),
         ])
         .areas(frame.area());
-        if let Some(name) = &self.repository_name {
+        if let Some(name) = repository_name {
             frame.render_widget(
-                Paragraph::new(name.as_str())
+                Paragraph::new(name)
                     .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
                 repository,
             );
@@ -761,10 +767,17 @@ impl App {
         let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
         let mut previous_size = None;
         let mut after_command = false;
+        let max_height = if self.inline {
+            config::load_inline_max_height(config::DefaultCommand::Log)?
+        } else {
+            None
+        };
         loop {
             if self.inline {
                 let size = crossterm::terminal::size()?;
-                let height = self.content_height(size.1);
+                let rows = max_height.map_or(size.1, |cap| cap.min(size.1));
+                let height = self.content_height(rows);
+                self.inline_full_height = height == size.1;
                 if after_command
                     || previous_size != Some(size)
                     || terminal.get_frame().area().height != height
@@ -1050,6 +1063,11 @@ fn display_directory(path: &std::path::Path, home: Option<&std::path::Path>) -> 
 /// Fetches Git data before entering raw mode, so Git errors leave the
 /// terminal untouched.  Manages its own terminal lifecycle.
 pub fn run() -> Result<(), Box<dyn Error>> {
+    run_mode(config::load_inline_default(config::DefaultCommand::Log)?)
+}
+
+/// Run fullscreen regardless of the configured inline default.
+pub fn run_fullscreen() -> Result<(), Box<dyn Error>> {
     run_mode(false)
 }
 
@@ -1068,7 +1086,7 @@ fn run_mode(inline: bool) -> Result<(), Box<dyn Error>> {
     let root = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()?;
-    if root.status.success() && !inline {
+    if root.status.success() {
         let root = String::from_utf8_lossy(&root.stdout);
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         app.repository_name = Some(display_directory(
@@ -1111,6 +1129,28 @@ mod tests {
         app.lines.clear();
         assert_eq!(app.content_height(30), 2);
         assert_eq!(app.content_height(1), 1);
+    }
+
+    #[test]
+    fn inline_repository_footer_appears_only_at_full_terminal_height() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app(20, 5);
+        app.inline = true;
+        app.repository_name = Some("~/project".into());
+        for cap in [4, 6, 4] {
+            let height = app.content_height(cap);
+            app.inline_full_height = height == 6;
+            let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let last_row: String = (0..100).map(|x| buffer[(x, height - 1)].symbol()).collect();
+            assert_eq!(last_row.starts_with("~/project"), app.inline_full_height);
+            assert_eq!(
+                app.page_height,
+                usize::from(height) - 1 - usize::from(app.inline_full_height)
+            );
+        }
     }
 
     #[test]
