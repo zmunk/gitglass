@@ -322,15 +322,22 @@ fn run_mode(
                     &mut selection,
                 );
             }
-            frame.render_widget(
-                Paragraph::new(help).style(Style::default().fg(Color::DarkGray)),
-                help_area,
-            );
+            let help_lines: Vec<_> = help
+                .lines()
+                .map(|line| {
+                    if expanded {
+                        gitglass_core::hints::hint_row(line)
+                    } else {
+                        gitglass_core::hints::hint_line(line)
+                    }
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(help_lines), help_area);
             let mut footer_lines = Vec::new();
             if !inline {
                 footer_lines.push(Line::styled(
                     format!("{} • branches", cwd.display()),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+                    Style::default().fg(Color::Cyan),
                 ));
             }
             if let Some(message) = &message {

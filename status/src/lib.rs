@@ -136,7 +136,7 @@ fn render(
     if let Some((cwd, branch)) = identity {
         footer_lines.push(Line::styled(
             format!("{cwd} • {branch}"),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+            Style::default().fg(Color::Cyan),
         ));
     }
     if let Some(message) = message {
@@ -505,7 +505,7 @@ mod tests {
         }
         assert!(!buffer[(0, 4)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(0, 4)].fg, Color::Cyan);
-        assert!(buffer[(0, 4)].modifier.contains(Modifier::DIM));
+        assert!(!buffer[(0, 4)].modifier.contains(Modifier::DIM));
     }
 
     #[test]

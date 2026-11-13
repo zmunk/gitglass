@@ -597,8 +597,7 @@ impl App {
         .areas(frame.area());
         if let Some(name) = repository_name {
             frame.render_widget(
-                Paragraph::new(name)
-                    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
+                Paragraph::new(name).style(Style::default().fg(Color::Cyan)),
                 repository,
             );
         }
@@ -724,8 +723,14 @@ impl App {
                 .or(self.action_message.as_deref())
                 .unwrap_or(hints)
         };
+        let line = if !editing_search && (self.log_error.is_some() || self.action_message.is_some())
+        {
+            Line::raw(text)
+        } else {
+            gitglass_core::hints::hint_line(text)
+        };
         frame.render_widget(
-            Paragraph::new(text)
+            Paragraph::new(line)
                 .scroll((0, scroll))
                 .style(
                     Style::default().fg(if self.log_error.is_some() && !editing_search {
@@ -1306,7 +1311,7 @@ mod tests {
             let repository: String = (0..100).map(|x| buffer[(x, 4)].symbol()).collect();
             assert_eq!(repository.trim_end(), "~/projects/gitglass");
             assert_eq!(buffer[(0, 4)].fg, Color::Cyan);
-            assert!(buffer[(0, 4)].modifier.contains(Modifier::DIM));
+            assert!(!buffer[(0, 4)].modifier.contains(Modifier::DIM));
             assert_eq!(buffer[(0, 3)].fg, Color::DarkGray);
             assert_eq!(app.page_height, 3);
         }
@@ -1968,7 +1973,7 @@ command = 'echo "$HASH"'
     }
 
     #[test]
-    fn git_colors_survive_selection_and_hints_are_gray() {
+    fn git_colors_survive_selection_and_hint_keys_are_light_gray() {
         use ratatui::{backend::TestBackend, Terminal};
 
         let text = b"\x1b[31m*\x1b[m \x1b[33mabc123\x1b[m message\n|/";
@@ -1980,7 +1985,8 @@ command = 'echo "$HASH"'
         assert_eq!(buffer[(0, 0)].fg, Color::Red);
         assert_eq!(buffer[(2, 0)].fg, Color::Yellow);
         assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
-        assert_eq!(buffer[(0, 4)].fg, Color::DarkGray);
+        assert_eq!(buffer[(0, 4)].fg, Color::Gray);
+        assert_eq!(buffer[(5, 4)].fg, Color::DarkGray);
 
         app.move_down(1);
         terminal.draw(|frame| app.draw(frame)).unwrap();

@@ -1,9 +1,4 @@
-use ratatui::{
-    layout::Rect,
-    style::{Color, Style},
-    widgets::Paragraph,
-    Frame,
-};
+use ratatui::{layout::Rect, widgets::Paragraph, Frame};
 
 use crate::config::Binding;
 
@@ -65,10 +60,8 @@ impl Help {
         } else {
             "? Show keybindings".to_owned()
         };
-        frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
-            area,
-        );
+        let lines: Vec<_> = text.lines().map(gitglass_core::hints::hint_row).collect();
+        frame.render_widget(Paragraph::new(lines), area);
     }
 }
 
@@ -76,7 +69,7 @@ impl Help {
 mod tests {
     use super::*;
     use crate::config::parse_config;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     #[test]
     fn collapsed_by_default_and_includes_compact_bindings() {
@@ -102,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_plain_header_and_grey_text() {
+    fn renders_light_grey_keys_and_dark_grey_actions() {
         let mut help = Help::new(&[]);
         let mut terminal = Terminal::new(TestBackend::new(40, 5)).unwrap();
         for expanded in [false, true] {
@@ -121,12 +114,20 @@ mod tests {
             };
             for (column, character) in header.chars().enumerate() {
                 assert_eq!(buffer[(column as u16, 0)].symbol(), character.to_string());
-                assert_eq!(buffer[(column as u16, 0)].fg, Color::DarkGray);
+                assert_eq!(
+                    buffer[(column as u16, 0)].fg,
+                    if column == 0 {
+                        Color::Gray
+                    } else {
+                        Color::DarkGray
+                    }
+                );
             }
             if expanded {
                 assert_eq!(buffer[(0, 1)].symbol(), "q");
                 assert_eq!(buffer[(0, 2)].symbol(), "j");
-                assert_eq!(buffer[(0, 2)].fg, Color::DarkGray);
+                assert_eq!(buffer[(0, 2)].fg, Color::Gray);
+                assert_eq!(buffer[(5, 2)].fg, Color::DarkGray);
                 assert_eq!(buffer[(0, 3)].symbol(), "c");
             }
         }

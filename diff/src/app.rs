@@ -354,7 +354,6 @@ impl App {
         let status_rows = status_len.div_ceil(area.width.max(1) as usize).clamp(1, 6) as u16;
         let regions = Layout::vertical([
             Constraint::Length(1),
-            Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(2 + status_rows),
         ])
@@ -363,35 +362,37 @@ impl App {
         let mut tabs = Vec::new();
         for (i, title) in titles.iter().enumerate() {
             if i > 0 {
-                tabs.push(Span::raw(" | "));
+                tabs.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
             }
             let style = if i == self.tab {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Gray)
-                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
+                    .fg(Color::Rgb(122, 162, 247))
+                    .bg(Color::Rgb(40, 53, 79))
+                    .add_modifier(Modifier::BOLD)
             } else if self.selecting() {
                 Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
             };
-            tabs.push(Span::styled(*title, style));
+            tabs.push(Span::styled(format!(" {title} "), style));
         }
-        frame.render_widget(Paragraph::new(Line::from(tabs)), regions[0]);
-        let mode = if self.tab == 2 {
-            "read only"
+        let tabs = Line::from(tabs);
+        let [filename_area, tabs_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(tabs.width() as u16)])
+                .areas(regions[0]);
+        frame.render_widget(Paragraph::new(tabs).alignment(Alignment::Right), tabs_area);
+        let header = if self.tab == 2 {
+            format!("{name} — read only")
         } else if self.selecting() {
-            "multi-line"
-        } else if self.nav[self.tab].mode == Mode::Hunk {
-            "hunk"
+            format!("{name} — multi-line")
         } else {
-            "single-line"
+            name.to_owned()
         };
         frame.render_widget(
-            Paragraph::new(format!("{name} — {mode}")).style(Style::default().fg(Color::DarkGray)),
-            regions[1],
+            Paragraph::new(header).style(Style::default().fg(Color::Cyan)),
+            filename_area,
         );
-        let body = regions[2];
+        let body = regions[1];
         self.viewport_height = body.height as usize;
         if self.tab == 2 {
             let lines: Vec<_> = self.snapshot.index.split_inclusive('\n').collect();
@@ -513,8 +514,8 @@ impl App {
             "Read only"
         };
         let mut lines = vec![
-            Line::raw(footer),
-            Line::raw(
+            gitglass_core::hints::hint_line(footer),
+            gitglass_core::hints::hint_line(
                 "j/k: move  [/]: tabs  Tab: line/hunk  v: select  o: swap ends  Esc: cancel/center  Ctrl-U/D: scroll  ←/→: pan  q: quit",
             ),
         ];
@@ -546,7 +547,7 @@ impl App {
             ));
         }
         let status = lines.split_off(2);
-        let footer = regions[3];
+        let footer = regions[2];
         frame.render_widget(
             Paragraph::new(lines),
             Rect::new(footer.x, footer.y, footer.width, footer.height.min(2)),
