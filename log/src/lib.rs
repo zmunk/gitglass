@@ -227,32 +227,22 @@ impl App {
         if self.page_height == 0 {
             return;
         }
-        if line < self.offset {
-            self.offset = line;
-        } else if line >= self.offset.saturating_add(self.page_height) {
-            self.offset = line + 1 - self.page_height;
+        // Keep context above and below, except at the ends of the list.
+        // In two-row panes, prefer preceding context: both sides cannot fit.
+        let above = usize::from(self.page_height > 1 && line > 0);
+        let below = usize::from(
+            self.page_height > 1
+                && (self.page_height > 2 || line == 0)
+                && line < self.lines.len().saturating_sub(1),
+        );
+        if line < self.offset.saturating_add(above) {
+            self.offset = line.saturating_sub(above);
+        } else if line >= self.offset.saturating_add(self.page_height - below) {
+            self.offset = (line + 1 + below).saturating_sub(self.page_height);
         }
-        // The first two display rows are padding, not selectable log entries.
-        if self.offset == 0 && line >= self.page_height.saturating_sub(self.top_padding()) {
-            self.offset = (line + 1).saturating_sub(self.page_height).max(1);
-        }
-        let max_offset = self
-            .lines
-            .len()
-            .saturating_sub(self.page_height)
-            .max(usize::from(
-                self.lines.len() > self.page_height.saturating_sub(self.top_padding()),
-            ));
-        self.offset = self.offset.min(max_offset);
-    }
-
-    fn top_padding(&self) -> usize {
-        // Keep inline output compact and at least one log row usable otherwise.
-        if self.inline {
-            0
-        } else {
-            self.page_height.saturating_sub(1).min(2)
-        }
+        self.offset = self
+            .offset
+            .min(self.lines.len().saturating_sub(self.page_height));
     }
 
     fn content_height(&self, rows: u16) -> u16 {
@@ -628,16 +618,6 @@ impl App {
             };
             frame.render_widget(Paragraph::new(message), body);
         } else {
-            let padding = if self.offset == 0 {
-                self.top_padding()
-            } else {
-                0
-            } as u16;
-            let body = ratatui::layout::Rect {
-                y: body.y + padding,
-                height: body.height.saturating_sub(padding),
-                ..body
-            };
             let items = self
                 .lines
                 .iter()
@@ -1148,7 +1128,6 @@ mod tests {
             }
         }
         assert_eq!(app.page_height, 2);
-        assert_eq!(app.top_padding(), 0);
     }
 
     #[test]
@@ -1185,24 +1164,73 @@ mod tests {
     }
 
     #[test]
-    fn top_padding_scrolls_away_and_returns_at_the_top() {
+    fn log_starts_at_top_and_keeps_context_when_scrolling_up() {
         use ratatui::{backend::TestBackend, Terminal};
 
-        let mut app = app(20, 5);
-        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
-        for _ in 0..2 {
+        for inline in [false, true] {
+            let mut app = app(20, 5);
+            app.inline = inline;
+            let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
             terminal.draw(|frame| app.draw(frame)).unwrap();
-            let buffer = terminal.backend().buffer();
-            for y in 0..2 {
-                assert!((0..80).all(|x| buffer[(x, y)].symbol() == " "));
-            }
-            assert_eq!(buffer[(0, 2)].symbol(), "*");
-            app.move_down(8);
-            terminal.draw(|frame| app.draw(frame)).unwrap();
-            assert!(app.offset > 0);
             assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "*");
+            assert!(terminal.backend().buffer()[(0, 0)]
+                .modifier
+                .contains(Modifier::BOLD));
+            app.move_down(8);
+            app.move_up(4);
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            assert_eq!((app.selected, app.offset), (4, 3));
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(2, 0)].symbol(), "3");
+            assert_eq!(buffer[(2, 1)].symbol(), "4");
+            assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
             app.move_up(usize::MAX);
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            assert_eq!((app.selected, app.offset), (0, 0));
+            assert!(terminal.backend().buffer()[(0, 0)]
+                .modifier
+                .contains(Modifier::BOLD));
         }
+    }
+
+    #[test]
+    fn context_stays_above_and_below_until_list_boundaries() {
+        for inline in [false, true] {
+            for height in 3..=6 {
+                let mut app = app(20, height);
+                app.inline = inline;
+                for selected in (0..20).chain((0..20).rev()) {
+                    app.selected = selected;
+                    app.keep_visible();
+                    let row = selected - app.offset;
+                    assert!(selected == 0 || row >= 1);
+                    assert!(selected == 19 || row < height - 1);
+                    assert!(row < height);
+                }
+                assert_eq!(app.offset, 0);
+                app.move_down(usize::MAX);
+                assert_eq!(app.selected - app.offset, height - 1);
+            }
+        }
+    }
+
+    #[test]
+    fn context_margin_handles_tiny_viewports_and_resizing() {
+        for height in 1..=6 {
+            let mut app = app(20, height);
+            app.move_down(usize::MAX);
+            for selected in (0..20).rev() {
+                app.selected = selected;
+                app.keep_visible();
+                let row = selected - app.offset;
+                assert!(row < height);
+                assert!(selected == 0 || height == 1 || row >= 1);
+            }
+        }
+        let mut app = app(20, 1);
+        app.move_down(10);
+        app.resize(2);
+        assert_eq!((app.selected, app.offset), (10, 9));
     }
 
     #[test]
@@ -1382,7 +1410,7 @@ command = 'echo "$HASH"'
         press(&mut app, 'd', KeyModifiers::CONTROL);
         assert_eq!(app.selected, 5);
         press(&mut app, 'd', KeyModifiers::CONTROL);
-        assert_eq!((app.selected, app.offset), (10, 1));
+        assert_eq!((app.selected, app.offset), (10, 2));
         press(&mut app, 'u', KeyModifiers::CONTROL);
         assert_eq!(app.selected, 5);
         press(&mut app, 'd', KeyModifiers::NONE);
@@ -1405,9 +1433,9 @@ command = 'echo "$HASH"'
         let mut app = app(100, 20);
         app.move_down(50);
         app.resize(5);
-        assert_eq!((app.selected, app.offset), (50, 46));
+        assert_eq!((app.selected, app.offset), (50, 47));
         app.resize(100);
-        assert_eq!((app.selected, app.offset), (50, 1));
+        assert_eq!((app.selected, app.offset), (50, 0));
     }
 
     #[test]
@@ -1881,12 +1909,12 @@ command = 'echo "$HASH"'
         let mut terminal = Terminal::new(TestBackend::new(40, 3)).unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| app.draw(frame)).unwrap();
-        assert_eq!(terminal.backend().buffer()[(1, 1)].bg, Color::Cyan);
-        assert_eq!(terminal.backend().buffer()[(6, 1)].bg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(1, 0)].bg, Color::Cyan);
+        assert_eq!(terminal.backend().buffer()[(6, 0)].bg, Color::Yellow);
         press(&mut app, 'n', KeyModifiers::NONE);
         terminal.draw(|frame| app.draw(frame)).unwrap();
-        assert_eq!(terminal.backend().buffer()[(1, 1)].bg, Color::Yellow);
-        assert_eq!(terminal.backend().buffer()[(6, 1)].bg, Color::Cyan);
+        assert_eq!(terminal.backend().buffer()[(1, 0)].bg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(6, 0)].bg, Color::Cyan);
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.search_line(0, &line), line);
     }
@@ -1908,17 +1936,17 @@ command = 'echo "$HASH"'
         let mut terminal = Terminal::new(TestBackend::new(80, 5)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 2)].symbol(), "*");
-        assert_eq!(buffer[(0, 2)].fg, Color::Red);
-        assert_eq!(buffer[(2, 2)].fg, Color::Yellow);
-        assert!(buffer[(0, 2)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 0)].symbol(), "*");
+        assert_eq!(buffer[(0, 0)].fg, Color::Red);
+        assert_eq!(buffer[(2, 0)].fg, Color::Yellow);
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(0, 4)].fg, Color::DarkGray);
 
         app.move_down(1);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 2)].fg, Color::Red);
-        assert!(!buffer[(0, 2)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 0)].fg, Color::Red);
+        assert!(!buffer[(0, 0)].modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -1929,13 +1957,13 @@ command = 'echo "$HASH"'
         let mut app = App::new(vec!["* abc123 (HEAD -> main) first".into(), "|/".into()]);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 2)].symbol(), "*");
-        assert!(buffer[(0, 2)].modifier.contains(Modifier::BOLD));
-        assert!(!buffer[(0, 3)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, 0)].symbol(), "*");
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert!(!buffer[(0, 1)].modifier.contains(Modifier::BOLD));
         app.move_down(1);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(!buffer[(0, 2)].modifier.contains(Modifier::BOLD));
-        assert!(buffer[(0, 3)].modifier.contains(Modifier::BOLD));
+        assert!(!buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
     }
 }

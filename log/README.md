@@ -54,7 +54,10 @@ The footer reports missing results and navigation boundaries. `/` from results
 retains the query; Esc cancels it. Ordinary shortcuts are text while typing
 (except Ctrl-c, which still quits).
 
-The viewport follows the selection and adapts to terminal resizing.
+The viewport follows the selection and adapts to terminal resizing. Entries
+start at the top with no blank padding. Selections keep one row of context above
+and below, except at the first/last entry. Single-row panes cannot show context;
+two-row panes prioritize preceding context.
 The branch list is sorted by committer date, newest first. It uses the same
 navigation keys and displays the current branch in green with a `*` marker;
 the cursor remains bold. Closing it preserves your log position; opening it
