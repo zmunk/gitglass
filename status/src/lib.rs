@@ -242,6 +242,7 @@ fn run_mode(
     let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
     let mut message: Option<String> = None;
     let mut help = help::Help::new(bindings);
+    help.background = config::load_status_hint_background()?;
     let mut after_command = false;
     let mut previous_size = None;
     let max_height = if inline {
@@ -288,6 +289,19 @@ fn run_mode(
                     match normalized {
                         (KeyCode::Char('q'), KeyModifiers::NONE) => {
                             if inline {
+                                let offset = selection.offset();
+                                selection.select(None);
+                                *selection.offset_mut() = offset;
+                                terminal.draw(|frame| {
+                                    render(
+                                        frame,
+                                        &status.text,
+                                        &mut selection,
+                                        None,
+                                        message.as_deref(),
+                                        &mut help,
+                                    );
+                                })?;
                                 gitglass_core::finish_inline_terminal(terminal, list_height)?;
                             }
                             return Ok(());
@@ -462,7 +476,7 @@ mod tests {
                 })
                 .unwrap();
             let buffer = terminal.backend().buffer();
-            for (row, expected) in [(0, "first"), (1, "second"), (2, "? Show keybindings")]
+            for (row, expected) in [(0, "first"), (1, "second"), (2, "  ? Show keybindings  ")]
                 .into_iter()
                 .chain(message.map(|message| (3, message)))
             {
@@ -496,7 +510,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         for (row, expected) in [
             (2, "fourth"),
-            (3, "? Show keybindings"),
+            (3, "  ? Show keybindings  "),
             (4, "/work/project • main"),
         ] {
             for (column, character) in expected.chars().enumerate() {
@@ -532,7 +546,7 @@ mod tests {
         assert_eq!(selection.selected(), Some(1));
         let buffer = terminal.backend().buffer();
         for (row, expected) in [
-            (7, "? Hide keybindings"),
+            (7, "  ? Hide keybindings  "),
             (8, "q  quit"),
             (10, "ctrl-d/ctrl-u  half page down/up"),
             (11, "/work • main"),

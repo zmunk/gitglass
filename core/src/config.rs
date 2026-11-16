@@ -41,6 +41,8 @@ struct KeybindingsSection {
     inline: bool,
     #[serde(default)]
     inline_max_height: Option<NonZeroU16>,
+    #[serde(default, deserialize_with = "deserialize_optional_color")]
+    hint_background: Option<Color>,
     #[serde(default)]
     keybindings: Vec<RawBinding>,
 }
@@ -383,6 +385,25 @@ pub fn load_diff_config() -> io::Result<DiffConfig> {
         .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
 }
 
+/// Parse the status hint background, retaining the default when absent.
+pub fn parse_status_hint_background(contents: &str) -> io::Result<Color> {
+    let config: Config = toml::from_str(contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(config
+        .status
+        .hint_background
+        .unwrap_or(Color::Rgb(56, 56, 56)))
+}
+
+/// Load the status hint background from the global configuration.
+pub fn load_status_hint_background() -> io::Result<Color> {
+    let Some((path, contents)) = load_contents()? else {
+        return Ok(Color::Rgb(56, 56, 56));
+    };
+    parse_status_hint_background(&contents)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
 /// Parse the default presentation mode for a viewer.
 pub fn parse_inline_default(contents: &str, command: DefaultCommand) -> io::Result<bool> {
     let config: Config = toml::from_str(contents)
@@ -470,6 +491,23 @@ fn load_contents() -> io::Result<Option<(PathBuf, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_hint_background_accepts_colors_and_defaults() {
+        assert_eq!(
+            parse_status_hint_background("").unwrap(),
+            Color::Rgb(56, 56, 56)
+        );
+        for (value, expected) in [
+            ("#282828", Color::Rgb(40, 40, 40)),
+            ("blue", Color::Blue),
+            ("reset", Color::Reset),
+        ] {
+            let contents = format!("[status]\nhint_background = {value:?}");
+            assert_eq!(parse_status_hint_background(&contents).unwrap(), expected);
+        }
+        assert!(parse_status_hint_background("[status]\nhint_background = 'invalid'").is_err());
+    }
 
     #[test]
     fn diff_colors_default_to_red_and_accept_named_and_hex_colors() {

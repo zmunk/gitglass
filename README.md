@@ -45,6 +45,7 @@ default_command = "status"
 [status]
 inline = true
 inline_max_height = 20
+hint_background = "#383838"
 
 [log]
 inline = true
@@ -64,6 +65,9 @@ command. `default_command` remains a command name without flags.
 inline panel, including hints and messages, in terminal rows. The panel still
 fits its contents and never exceeds the terminal height. Omit the setting to
 allow the full terminal height; fullscreen mode ignores the cap.
+
+`status.hint_background` sets the hint line background in both modes. It accepts
+named colors or `#RRGGBB` (default: `#383838`); use `"reset"` for the terminal background.
 
 ## Subcommands
 

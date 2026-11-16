@@ -1,9 +1,10 @@
-use ratatui::{layout::Rect, widgets::Paragraph, Frame};
+use ratatui::{layout::Rect, style::Color, widgets::Paragraph, Frame};
 
 use crate::config::Binding;
 
 pub struct Help {
     pub expanded: bool,
+    pub background: Color,
     rows: Vec<String>,
 }
 
@@ -30,6 +31,7 @@ impl Help {
         .collect();
         Self {
             expanded: false,
+            background: Color::Rgb(56, 56, 56),
             rows,
         }
     }
@@ -60,7 +62,20 @@ impl Help {
         } else {
             "? Show keybindings".to_owned()
         };
-        let lines: Vec<_> = text.lines().map(gitglass_core::hints::hint_row).collect();
+        let lines: Vec<_> = text
+            .lines()
+            .enumerate()
+            .map(|(index, text)| {
+                let mut line = gitglass_core::hints::hint_row(text);
+                if index == 0 {
+                    line.spans.insert(0, "  ".into());
+                    line.spans.push("  ".into());
+                    line.style(ratatui::style::Style::default().bg(self.background))
+                } else {
+                    line
+                }
+            })
+            .collect();
         frame.render_widget(Paragraph::new(lines), area);
     }
 }
@@ -100,6 +115,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(40, 5)).unwrap();
         for expanded in [false, true] {
             help.expanded = expanded;
+            help.background = Color::Rgb(40, 40, 40);
             terminal
                 .draw(|frame| {
                     let area = frame.area();
@@ -107,21 +123,31 @@ mod tests {
                 })
                 .unwrap();
             let buffer = terminal.backend().buffer();
+            for column in 0..40 {
+                assert_eq!(buffer[(column, 0)].bg, Color::Rgb(40, 40, 40));
+                assert_eq!(buffer[(column, 1)].bg, Color::Reset);
+            }
             let header = if expanded {
                 "? Hide keybindings"
             } else {
                 "? Show keybindings"
             };
             for (column, character) in header.chars().enumerate() {
-                assert_eq!(buffer[(column as u16, 0)].symbol(), character.to_string());
                 assert_eq!(
-                    buffer[(column as u16, 0)].fg,
+                    buffer[(column as u16 + 2, 0)].symbol(),
+                    character.to_string()
+                );
+                assert_eq!(
+                    buffer[(column as u16 + 2, 0)].fg,
                     if column == 0 {
                         Color::Gray
                     } else {
                         Color::DarkGray
                     }
                 );
+            }
+            for column in [0, 1, header.len() as u16 + 2, header.len() as u16 + 3] {
+                assert_eq!(buffer[(column, 0)].symbol(), " ");
             }
             if expanded {
                 assert_eq!(buffer[(0, 1)].symbol(), "q");
