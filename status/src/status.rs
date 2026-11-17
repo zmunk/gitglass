@@ -1,6 +1,9 @@
 use std::{ffi::OsString, io, path::PathBuf};
 
-use ratatui::text::Text;
+use ratatui::{
+    style::{Color, Style},
+    text::Text,
+};
 
 pub struct Status {
     pub text: Text<'static>,
@@ -11,6 +14,13 @@ impl Status {
     pub fn message(message: &'static str) -> Self {
         Self {
             text: Text::raw(message),
+            paths: Vec::new(),
+        }
+    }
+
+    fn styled_message(message: &'static str, style: Style) -> Self {
+        Self {
+            text: Text::styled(message, style),
             paths: Vec::new(),
         }
     }
@@ -45,7 +55,10 @@ fn display_path(bytes: &[u8]) -> String {
 // NUL-delimited paths (destination first for renames/copies).
 pub fn parse(output: &[u8]) -> io::Result<Status> {
     if output.is_empty() {
-        return Ok(Status::message("Working tree clean"));
+        return Ok(Status::styled_message(
+            "Working tree clean",
+            Style::default().fg(Color::Green),
+        ));
     }
     let invalid = || {
         io::Error::new(

@@ -162,7 +162,12 @@ fn status_list(status: &Text<'static>) -> List<'static> {
             .lines
             .iter()
             .cloned()
-            .map(ListItem::new)
+            .map(|mut line| {
+                if line.to_string() == "Working tree clean" {
+                    line = line.style(Style::default().fg(Color::Green));
+                }
+                ListItem::new(line)
+            })
             .collect::<Vec<_>>(),
     )
     .highlight_style(Style::default().add_modifier(Modifier::BOLD))
